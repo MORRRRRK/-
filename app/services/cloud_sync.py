@@ -105,7 +105,9 @@ def _request(
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read()
     except urllib.error.HTTPError as exc:
-        raise CloudSyncError(f"WebDAV 请求失败（HTTP {exc.code}）", exc.code) from exc
+        raise CloudSyncError(
+            f"WebDAV 请求失败（{method} {url}，HTTP {exc.code}）", exc.code
+        ) from exc
     except urllib.error.URLError as exc:
         raise CloudSyncError(f"网络连接失败：{exc.reason}") from exc
 
@@ -164,13 +166,20 @@ def _upload_remote(url: str, username: str, password: str, data: bytes) -> None:
 def _ensure_remote_path(url: str, username: str, password: str) -> None:
     """按需创建 WebDAV 路径中的每一级目录，避免 PUT 返回 404。"""
     parts = urllib.parse.urlsplit(url)
-    segments = [segment for segment in parts.path.split("/") if segment]
+    segments = [
+        urllib.parse.unquote(segment)
+        for segment in parts.path.split("/")
+        if segment
+    ]
     if not segments:
         return
     dirs = segments[:-1]
     base = f"{parts.scheme}://{parts.netloc}"
     for index in range(1, len(dirs) + 1):
-        folder = base + "/" + "/".join(dirs[:index]) + "/"
+        encoded = [
+            urllib.parse.quote(segment) for segment in dirs[:index]
+        ]
+        folder = base + "/" + "/".join(encoded) + "/"
         try:
             _request("MKCOL", folder, username, password, timeout=30)
         except CloudSyncError:

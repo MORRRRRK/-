@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import ctypes
+import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -434,25 +434,53 @@ class SettingsPage(QScrollArea):
 
     def _open_firewall(self) -> None:
         port = int(self.web_port_spin.value())
-        args = (
-            "advfirewall firewall add rule "
-            f'name="个人财务软件局域网访问" dir=in action=allow '
-            f"protocol=TCP localport={port}"
+        rule_name = "个人财务软件局域网访问"
+        ps_command = (
+            "$args = @('advfirewall','firewall','add','rule',"
+            f"'name={rule_name}','dir=in','action=allow','protocol=TCP',"
+            f"'localport={port}'); "
+            "Start-Process -FilePath 'netsh' -ArgumentList $args "
+            "-Verb RunAs -Wait"
         )
-        result = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", "netsh", args, None, 1
-        )
-        if result > 32:
-            QMessageBox.information(
-                self,
-                "已提交",
-                "已请求系统开放防火墙端口，请在管理员确认窗口中点击“是”。",
+        try:
+            proc = subprocess.Popen(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-Command",
+                    ps_command,
+                ],
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-        else:
+            proc.wait(timeout=120)
+        except Exception:
             QMessageBox.warning(
                 self,
                 "未完成",
-                "未能弹出管理员确认窗口，请在 Windows 防火墙中手动放行该端口。",
+                "未能完成防火墙设置，请在 Windows 防火墙中手动放行该端口。",
+            )
+            return
+        check = subprocess.run(
+            [
+                "netsh",
+                "advfirewall",
+                "firewall",
+                "show",
+                "rule",
+                f"name={rule_name}",
+            ],
+            capture_output=True,
+            text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if rule_name in check.stdout:
+            self.web_status_label.setText(f"防火墙已放行端口 {port}")
+            QMessageBox.information(self, "设置成功", "局域网访问端口已放行。")
+        else:
+            QMessageBox.warning(
+                self,
+                "未检测到规则",
+                "未检测到防火墙放行规则，请手动在 Windows 防火墙中放行该端口。",
             )
 
     def set_cloud_status(self, text: str) -> None:

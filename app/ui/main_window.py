@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QStackedWidget,
     QTableWidget,
     QVBoxLayout,
@@ -54,6 +55,7 @@ class MainWindow(QMainWindow):
         self._cloud_worker: CloudSyncWorker | None = None
         self._cloud_mode = ""
         self._cloud_quiet = False
+        self._update_progress: QProgressDialog | None = None
         self._check_timer: QTimer | None = None
         self._current_about_page = None
         self.web_server: WebService | None = None
@@ -345,12 +347,23 @@ class MainWindow(QMainWindow):
         self._install_worker.finished.connect(self._on_install_finished)
         self._install_worker.failed.connect(self._on_install_failed)
         self._install_worker.progress.connect(self._on_install_progress)
+        self._update_progress = QProgressDialog(
+            "正在下载并校验更新包…", "", 0, 100, self
+        )
+        self._update_progress.setWindowTitle("软件更新")
+        self._update_progress.setAutoClose(False)
+        self._update_progress.setCancelButton(None)
+        self._update_progress.setMinimumDuration(0)
+        self._update_progress.show()
         self._install_worker.start()
         if self._current_about_page is not None:
             self._current_about_page.update_status.setText("正在下载并校验更新包…")
 
     def _on_install_finished(self, version: str) -> None:
         self._install_worker = None
+        if self._update_progress is not None:
+            self._update_progress.close()
+            self._update_progress = None
         if self._current_about_page is not None:
             self._current_about_page.clear_progress()
         QMessageBox.information(
@@ -362,6 +375,9 @@ class MainWindow(QMainWindow):
 
     def _on_install_failed(self, message: str) -> None:
         self._install_worker = None
+        if self._update_progress is not None:
+            self._update_progress.close()
+            self._update_progress = None
         if self._current_about_page is not None:
             self._current_about_page.clear_progress()
         QMessageBox.warning(
@@ -369,6 +385,16 @@ class MainWindow(QMainWindow):
         )
 
     def _on_install_progress(self, current: int, total: int) -> None:
+        if self._update_progress is not None:
+            if total <= 0:
+                self._update_progress.setRange(0, 0)
+            else:
+                percent = max(0, min(100, int(current * 100 / total)))
+                self._update_progress.setRange(0, 100)
+                self._update_progress.setValue(percent)
+                self._update_progress.setLabelText(
+                    f"正在下载并校验更新包… {percent}%"
+                )
         if self._current_about_page is not None:
             self._current_about_page.set_progress(current, total)
 

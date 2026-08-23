@@ -12,7 +12,12 @@ from PySide6.QtWidgets import (
 from ... import VERSION_LABEL
 from ..widgets import make_button
 
-CHANGELOG = """V3.1.2
+CHANGELOG = """V3.1.3
+· 修复坚果云中文目录同步 404：目录自动创建且正确处理编码
+· 更新下载新增全局进度窗口，不再只在“关于”页显示
+· 防火墙按钮改为隐藏终端窗口并等待管理员确认
+
+V3.1.2
 · 修复 WebDAV 深层目录同步 404，自动创建坚果云目录
 · 设置页改为可滚动，窗口缩小时不再挤压
 · 更新下载新增进度条，并加强网络超时保护
