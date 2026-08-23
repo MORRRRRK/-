@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>个人财务软件</title>
+<style>
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --border: #e2e5ea;
+  --text: #1f2430;
+  --muted: #6b7280;
+  --accent: #2563eb;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+header h1 { font-size: 18px; margin: 0; flex: 1; }
+button, select, input {
+  font-size: 14px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+}
+button { cursor: pointer; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+nav { display: flex; gap: 6px; padding: 10px 20px; flex-wrap: wrap; }
+nav button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+main { padding: 0 20px 30px; }
+section { display: none; }
+section.active { display: block; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 12px 0; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+.card .title { color: var(--muted); font-size: 13px; }
+.card .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+.chart-box { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px; }
+canvas { width: 100%; height: 280px; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; font-size: 13px; }
+th, td { border-bottom: 1px solid var(--border); padding: 7px 9px; text-align: center; }
+th { background: #f1f3f7; font-weight: 600; }
+tr:last-child td { border-bottom: none; }
+.login-wrap { max-width: 340px; margin: 80px auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 24px; }
+.login-wrap h2 { margin: 0 0 16px; font-size: 17px; }
+.login-wrap label { display: block; color: var(--muted); margin: 10px 0 4px; }
+.login-wrap input { width: 100%; }
+.login-wrap button { width: 100%; margin-top: 14px; }
+.toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.report-content { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px; white-space: pre-wrap; min-height: 200px; }
+.muted { color: var(--muted); }
+@media (max-width: 800px) {
+  .charts { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div id="loginScreen" class="login-wrap" style="display:none">
+  <h2>个人财务软件 只读访问</h2>
+  <label>访问码</label>
+  <input id="accessCode" type="password" placeholder="请输入访问码">
+  <button class="primary" onclick="login()">进入</button>
+  <p id="loginError" class="muted"></p>
+</div>
+
+<div id="appScreen" style="display:none">
+  <header>
+    <h1>个人财务软件</h1>
+    <span class="muted" id="connectionInfo"></span>
+    <button onclick="logout()">退出</button>
+  </header>
+  <nav>
+    <button data-tab="overview" class="active" onclick="showTab('overview')">总览</button>
+    <button data-tab="monthly" onclick="showTab('monthly')">月度流水</button>
+    <button data-tab="holdings" onclick="showTab('holdings')">持仓</button>
+    <button data-tab="reports" onclick="showTab('reports')">智能报告</button>
+  </nav>
+  <main>
+    <section id="tab-overview" class="active">
+      <div class="cards" id="overviewCards"></div>
+      <div class="charts">
+        <div class="chart-box"><h3>收入 / 结余 / 存款</h3><canvas id="barChart"></canvas></div>
+        <div class="chart-box"><h3>资产配置</h3><canvas id="pieChart"></canvas></div>
+      </div>
+      <h3>汇总明细</h3>
+      <div id="overviewTable"></div>
+    </section>
+    <section id="tab-monthly">
+      <div class="toolbar">
+        <label>年份</label>
+        <select id="monthYearSelect" onchange="loadMonthly()"></select>
+      </div>
+      <h3>月度流水</h3>
+      <div id="monthlyTable"></div>
+      <h3>大笔消费 / 收入</h3>
+      <div id="largeItemsTable"></div>
+    </section>
+    <section id="tab-holdings">
+      <div class="cards" id="holdingCards"></div>
+      <h3>持仓列表</h3>
+      <div id="holdingsTable"></div>
+      <h3>无代码黄金账户</h3>
+      <div id="goldTable"></div>
+    </section>
+    <section id="tab-reports">
+      <div class="toolbar">
+        <button onclick="loadReports()">刷新</button>
+      </div>
+      <h3>报告列表</h3>
+      <div id="reportsTable"></div>
+      <h3>报告内容</h3>
+      <div id="reportContent" class="report-content">选择左侧报告查看内容</div>
+    </section>
+  </main>
+</div>
+
+<script>
+let currentReports = [];
+
+function money(v) {
+  if (v === null || v === undefined) return "0.00";
+  return Number(v).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function pct(v) {
+  return (Number(v || 0) * 100).toFixed(2) + "%";
+}
+
+async function api(path, options) {
+  const resp = await fetch(path, options);
+  if (resp.status === 401) {
+    showLogin();
+    throw new Error("unauthorized");
+  }
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || "请求失败");
+  return data;
+}
+
+function showLogin() {
+  document.getElementById("loginScreen").style.display = "block";
+  document.getElementById("appScreen").style.display = "none";
+}
+
+function showApp() {
+  document.getElementById("loginScreen").style.display = "none";
+  document.getElementById("appScreen").style.display = "block";
+  loadAll();
+}
+
+async function login() {
+  const code = document.getElementById("accessCode").value;
+  document.getElementById("loginError").textContent = "";
+  try {
+    await api("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code })
+    });
+    showApp();
+  } catch (e) {
+    document.getElementById("loginError").textContent = "访问码错误";
+  }
+}
+
+async function logout() {
+  document.cookie = "finance_session=; Max-Age=0; Path=/";
+  showLogin();
+}
+
+function showTab(name) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
+  document.querySelector(`nav button[data-tab="${name}"]`).classList.add("active");
+  document.querySelectorAll("main section").forEach(s => s.classList.remove("active"));
+  document.getElementById("tab-" + name).classList.add("active");
+}
+
+function htmlTable(headers, rows) {
+  const thead = "<tr>" + headers.map(h => `<th>${h}</th>`).join("") + "</tr>";
+  const tbody = rows.map(row => "<tr>" + row.map(c => `<td>${c}</td>`).join("") + "</tr>").join("");
+  return `<table>${thead}${tbody}</table>`;
+}
+
+async function loadAll() {
+  try {
+    const [overview, holdings] = await Promise.all([api("/api/overview"), api("/api/holdings")]);
+    renderOverview(overview);
+    renderHoldings(holdings);
+    const years = overview.years.map(y => y.year);
+    const sel = document.getElementById("monthYearSelect");
+    sel.innerHTML = "";
+    years.forEach(y => {
+      const opt = document.createElement("option");
+      opt.value = y;
+      opt.textContent = y + " 年";
+      sel.appendChild(opt);
+    });
+    loadMonthly();
+    loadReports();
+  } catch (e) {}
+}
+
+function renderOverview(data) {
+  const cards = [
+    ["净资产", money(data.net_worth)],
+    ["累计存款", money(data.totals.deposits)],
+    ["投资持仓", money(data.investment.total_holding)],
+    ["累计收益", money(data.investment.total_cumulative)],
+    ["总收益率", pct(data.investment.total_rate)]
+  ];
+  document.getElementById("overviewCards").innerHTML = cards.map(([t, v]) =>
+    `<div class="card"><div class="title">${t}</div><div class="value">${v}</div></div>`).join("");
+
+  const labels = data.years.map(y => String(y.year));
+  const income = data.years.map(y => y.summary.income);
+  const balance = data.years.map(y => y.summary.balance);
+  const deposits = data.years.map(y => y.summary.deposits);
+  drawBar(document.getElementById("barChart"), labels, [
+    { name: "收入", values: income, color: "#2563eb" },
+    { name: "结余", values: balance, color: "#059669" },
+    { name: "存款", values: deposits, color: "#d97706" }
+  ]);
+  const alloc = Object.entries(data.allocation).filter(([, v]) => Number(v) > 0);
+  drawPie(document.getElementById("pieChart"), alloc.map(([k]) => k), alloc.map(([, v]) => Number(v)));
+  const rows = data.years.map(y => [
+    y.year,
+    money(y.summary.salary),
+    money(y.summary.income),
+    money(y.summary.housing_cost),
+    money(y.summary.balance),
+    money(y.summary.deposits)
+  ]);
+  document.getElementById("overviewTable").innerHTML = htmlTable(
+    ["年份", "工资", "收入", "住宿成本", "理论结余", "存款"], rows);
+}
+
+async function loadMonthly() {
+  const year = document.getElementById("monthYearSelect").value || 0;
+  try {
+    const data = await api("/api/monthly?year=" + year);
+    const rows = Array.from({length: 12}, (_, i) => {
+      const rec = data.records.find(r => r.month === i + 1) || {};
+      return [
+        i + 1 + " 月",
+        money(rec.salary || 0),
+        money(rec.year_end_bonus || 0),
+        money(rec.subsidies || 0),
+        money(rec.reimbursements || 0),
+        money(rec.rent || 0),
+        money(rec.utilities || 0),
+        money(rec.forced_deposit || 0),
+        rec.income_note || "",
+        rec.housing_note || "",
+        rec.deposit_note || ""
+      ];
+    });
+    document.getElementById("monthlyTable").innerHTML = htmlTable(
+      ["月份", "月工资", "年终奖", "补贴", "报销", "房租", "水电", "存款", "收入备注", "住房备注", "存款备注"],
+      rows);
+    const items = data.large_items.map(it => [
+      it.item_date, it.name, money(it.amount), it.item_type === "income" ? "收入" : "支出", it.note
+    ]);
+    document.getElementById("largeItemsTable").innerHTML = htmlTable(
+      ["日期", "名称", "金额", "类型", "备注"], items);
+  } catch (e) {}
+}
+
+function renderHoldings(data) {
+  const cards = [
+    ["总持仓", money(data.summary.total_holding)],
+    ["累计收益", money(data.summary.total_cumulative)],
+    ["总收益率", pct(data.summary.total_rate)]
+  ];
+  document.getElementById("holdingCards").innerHTML = cards.map(([t, v]) =>
+    `<div class="card"><div class="title">${t}</div><div class="value">${v}</div></div>`).join("");
+  const rows = data.holdings.map(h => [
+    h.category, h.channel, h.name, h.symbol, h.asset_type, h.shares || 0,
+    money(h.holding_value), money(h.holding_profit), money(h.cumulative_profit),
+    h.return_rate === null || h.return_rate === undefined ? "" : pct(h.return_rate),
+    h.invest_plan || 0, h.invest_time, h.price_time
+  ]);
+  document.getElementById("holdingsTable").innerHTML = htmlTable(
+    ["类别", "渠道", "名称", "代码", "资产类型", "份额", "持仓", "持有收益", "累计收益", "收益率", "定投金额", "定投时间", "更新时间"],
+    rows);
+  const goldRows = data.gold_accounts.map(g => {
+    const value = g.grams * (g.last_price || 0);
+    return [g.name, g.channel, g.grams, money(g.last_price || 0), money(value), money(g.cost_basis), money(value - g.cost_basis), g.note];
+  });
+  document.getElementById("goldTable").innerHTML = htmlTable(
+    ["名称", "渠道", "克数", "参考金价", "市值", "成本", "收益", "备注"], goldRows);
+}
+
+async function loadReports() {
+  try {
+    const data = await api("/api/reports");
+    currentReports = data.reports || [];
+    const rows = currentReports.map(r => [
+      `<button onclick="showReport(${r.id})">查看</button>`,
+      r.report_type,
+      r.title,
+      r.model,
+      r.created_at
+    ]);
+    document.getElementById("reportsTable").innerHTML = htmlTable(
+      ["操作", "类型", "标题", "模型", "生成时间"], rows);
+  } catch (e) {}
+}
+
+function showReport(id) {
+  const report = currentReports.find(r => r.id === id);
+  if (report) document.getElementById("reportContent").textContent = report.content;
+}
+
+function drawBar(canvas, labels, series) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  const pad = { top: 24, right: 12, bottom: 28, left: 48 };
+  const innerW = w - pad.left - pad.right;
+  const innerH = h - pad.top - pad.bottom;
+  const all = series.flatMap(s => s.values).map(Number);
+  const maxV = Math.max(1, ...all);
+  const groupW = innerW / Math.max(1, labels.length);
+  const barW = Math.min(24, (groupW * 0.7) / series.length);
+  ctx.font = "11px sans-serif";
+  ctx.fillStyle = "#6b7280";
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + innerH - (innerH * i / 4);
+    ctx.strokeStyle = "#e2e5ea";
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(w - pad.right, y); ctx.stroke();
+    ctx.fillText(Math.round(maxV * i / 4), 4, y + 4);
+  }
+  labels.forEach((label, i) => {
+    const cx = pad.left + groupW * i + groupW / 2;
+    ctx.fillStyle = "#6b7280";
+    ctx.textAlign = "center";
+    ctx.fillText(label, cx, h - 8);
+    series.forEach((s, j) => {
+      const value = Number(s.values[i] || 0);
+      const bh = (value / maxV) * innerH;
+      const x = cx - (series.length * barW) / 2 + j * barW;
+      ctx.fillStyle = s.color;
+      ctx.fillRect(x, pad.top + innerH - bh, barW - 2, bh);
+    });
+  });
+  ctx.textAlign = "left";
+  series.forEach((s, j) => {
+    ctx.fillStyle = s.color;
+    ctx.fillRect(8 + j * 80, 6, 10, 10);
+    ctx.fillStyle = "#1f2430";
+    ctx.fillText(s.name, 22 + j * 80, 15);
+  });
+}
+
+function drawPie(canvas, labels, values) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  const total = values.reduce((a, b) => a + b, 0);
+  if (total <= 0) return;
+  const colors = ["#2563eb", "#059669", "#d97706", "#7c3aed", "#dc2626", "#0891b2"];
+  const cx = w * 0.32, cy = h * 0.45, r = Math.min(w, h) * 0.32;
+  let angle = -Math.PI / 2;
+  values.forEach((v, i) => {
+    const slice = (v / total) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, r, angle, angle + slice);
+    ctx.closePath();
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.fill();
+    angle += slice;
+  });
+  ctx.font = "12px sans-serif";
+  let y = 20;
+  labels.forEach((label, i) => {
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.fillRect(w * 0.68, y, 10, 10);
+    ctx.fillStyle = "#1f2430";
+    ctx.fillText(label + " " + (values[i] / total * 100).toFixed(1) + "%", w * 0.68 + 16, y + 10);
+    y += 20;
+  });
+}
+
+async function init() {
+  try {
+    await api("/api/overview");
+    showApp();
+  } catch (e) {
+    showLogin();
+  }
+}
+init();
+</script>
+</body>
+</html>

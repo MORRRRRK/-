@@ -25,6 +25,7 @@ from ..core import repository
 from ..core.db import Database
 from ..core.paths import backups_dir, db_path, exports_dir
 from ..services import exporter
+from ..services.web_server import WebService
 from ..services.updater import is_newer, update_repo, update_token
 from ..services.importer import MigrationError, import_xlsx
 from .update_worker import UpdateCheckWorker, UpdateInstallWorker
@@ -34,6 +35,7 @@ from .pages.insurance import InsurancePage
 from .pages.monthly import MonthlyPage
 from .pages.overview import OverviewPage
 from .pages.planning import PlanningPage
+from .pages.reports import ReportsPage
 from .pages.settings import SettingsPage
 
 
@@ -49,10 +51,12 @@ class MainWindow(QMainWindow):
         self._check_worker = None
         self._install_worker = None
         self._current_about_page = None
+        self.web_server: WebService | None = None
         self._build_menus()
         self._build_ui()
         self.refresh_all()
         self._apply_style()
+        self._apply_web_settings()
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -69,6 +73,7 @@ class MainWindow(QMainWindow):
             "工资参数",
             "持仓管理",
             "资产规划",
+            "智能报告",
             "设置",
             "关于",
         ]:
@@ -76,14 +81,18 @@ class MainWindow(QMainWindow):
         self.nav.currentRowChanged.connect(self._switch_page)
 
         self.stack = QStackedWidget()
+        self.reports_page = ReportsPage(self.db.conn, self.refresh_all)
+        self.settings_page = SettingsPage(self.db.conn, self._settings_changed)
+        self.about_page = AboutPage(self.db.conn, self._check_update)
         self.pages = [
             OverviewPage(self.db.conn),
             MonthlyPage(self.db.conn, self.refresh_all),
             InsurancePage(self.db.conn, self.refresh_all),
             HoldingsPage(self.db.conn, self.refresh_all),
             PlanningPage(self.db.conn, self.refresh_all),
-            SettingsPage(self.db.conn, self._settings_changed),
-            AboutPage(self.db.conn, self._check_update),
+            self.reports_page,
+            self.settings_page,
+            self.about_page,
         ]
         for page in self.pages:
             self.stack.addWidget(page)
@@ -118,6 +127,41 @@ class MainWindow(QMainWindow):
     def _settings_changed(self) -> None:
         self._apply_style()
         self.refresh_all()
+        self._apply_web_settings()
+
+    def _apply_web_settings(self) -> None:
+        if self.web_server is not None:
+            self.web_server.stop()
+            self.web_server = None
+        enabled = repository.get_setting(self.db.conn, "web_enabled", "0") == "1"
+        access_code = repository.get_setting(self.db.conn, "web_access_code", "").strip()
+        try:
+            port = int(repository.get_setting(self.db.conn, "web_port", "8765"))
+        except ValueError:
+            port = 8765
+        if not enabled:
+            self.settings_page.set_web_status("局域网访问已关闭")
+            return
+        if not access_code:
+            self.settings_page.set_web_status("请先设置访问码后再启用")
+            return
+        try:
+            self.web_server = WebService(port, access_code)
+            self.web_server.start()
+        except OSError as exc:
+            self.web_server = None
+            self.settings_page.set_web_status(f"局域网访问启动失败：{exc}")
+            return
+        urls = self.web_server.urls()
+        self.settings_page.set_web_status(
+            f"已启动，本机：{urls['local']}  局域网：{urls['lan']}"
+        )
+
+    def closeEvent(self, event) -> None:
+        if self.web_server is not None:
+            self.web_server.stop()
+            self.web_server = None
+        super().closeEvent(event)
 
     def _startup_update_check(self) -> None:
         self._run_update_check(quiet=True)

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QGridLayout,
@@ -16,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from ...core import repository
 from ...core.paths import backups_dir, exports_dir
+from ...services import llm
 from ...edition import is_customer
 from ..widgets import (
     NoWheelSpinBox,
@@ -125,6 +129,65 @@ class SettingsPage(QWidget):
         section.add_layout(grid)
         layout.addWidget(section)
 
+        llm_section = Section("大模型报告设置（OpenAI 兼容接口）")
+        llm_grid = QGridLayout()
+        llm_grid.setHorizontalSpacing(24)
+        llm_grid.setVerticalSpacing(10)
+        llm_grid.addWidget(QLabel("接口地址"), 0, 0)
+        self.llm_base_url_edit = line_edit(
+            placeholder="如 https://api.deepseek.com/v1"
+        )
+        llm_grid.addWidget(self.llm_base_url_edit, 0, 1)
+        llm_grid.addWidget(QLabel("API Key"), 1, 0)
+        self.llm_api_key_edit = QLineEdit()
+        self.llm_api_key_edit.setEchoMode(QLineEdit.Password)
+        self.llm_api_key_edit.setPlaceholderText("填写后用于生成智能报告")
+        llm_grid.addWidget(self.llm_api_key_edit, 1, 1)
+        llm_grid.addWidget(QLabel("模型名称"), 2, 0)
+        self.llm_model_edit = line_edit(placeholder="如 deepseek-chat")
+        llm_grid.addWidget(self.llm_model_edit, 2, 1)
+        self.test_llm_button = make_button("测试连接")
+        self.test_llm_button.clicked.connect(self._test_llm)
+        llm_grid.addWidget(self.test_llm_button, 2, 2)
+        llm_note = QLabel(
+            "生成报告时会向该接口发送完整财务数据，包括流水、备注与持仓信息；"
+            "接口地址和 API Key 只保存在本地数据库。"
+        )
+        llm_note.setObjectName("fieldLabel")
+        llm_note.setWordWrap(True)
+        llm_grid.addWidget(llm_note, 3, 0, 1, 3)
+        llm_section.add_layout(llm_grid)
+        layout.addWidget(llm_section)
+
+        web_section = Section("局域网只读访问")
+        web_grid = QGridLayout()
+        web_grid.setHorizontalSpacing(24)
+        web_grid.setVerticalSpacing(10)
+        self.web_enabled_check = QCheckBox("启用局域网只读访问")
+        web_grid.addWidget(self.web_enabled_check, 0, 0)
+        web_grid.addWidget(QLabel("端口"), 1, 0)
+        self.web_port_spin = NoWheelSpinBox()
+        self.web_port_spin.setDecimals(0)
+        self.web_port_spin.setRange(1024, 65535)
+        self.web_port_spin.setValue(8765)
+        web_grid.addWidget(self.web_port_spin, 1, 1)
+        web_grid.addWidget(QLabel("访问码"), 2, 0)
+        self.web_access_code_edit = line_edit(placeholder="必须填写后才能开启")
+        web_grid.addWidget(self.web_access_code_edit, 2, 1)
+        self.web_status_label = QLabel("局域网访问未启动")
+        self.web_status_label.setObjectName("summaryValue")
+        self.web_status_label.setWordWrap(True)
+        web_grid.addWidget(self.web_status_label, 3, 0, 1, 3)
+        web_note = QLabel(
+            "开启后同一局域网的手机/电脑可用浏览器查看，Web 端只读；"
+            "端口默认 8765，访问码用于登录保护。"
+        )
+        web_note.setObjectName("fieldLabel")
+        web_note.setWordWrap(True)
+        web_grid.addWidget(web_note, 4, 0, 1, 3)
+        web_section.add_layout(web_grid)
+        layout.addWidget(web_section)
+
         cache_section = Section("缓存清理")
         cache_layout = QHBoxLayout()
         self.clear_cache_button = make_button("清除导出与备份缓存")
@@ -169,6 +232,26 @@ class SettingsPage(QWidget):
         self.github_token_edit.setText(
             repository.get_setting(self.conn, "github_token", "")
         )
+        self.llm_base_url_edit.setText(
+            repository.get_setting(self.conn, "llm_base_url", "")
+        )
+        self.llm_api_key_edit.setText(
+            repository.get_setting(self.conn, "llm_api_key", "")
+        )
+        self.llm_model_edit.setText(
+            repository.get_setting(self.conn, "llm_model", "")
+        )
+        self.web_enabled_check.setChecked(
+            repository.get_setting(self.conn, "web_enabled", "0") == "1"
+        )
+        try:
+            port = int(repository.get_setting(self.conn, "web_port", "8765"))
+        except ValueError:
+            port = 8765
+        self.web_port_spin.setValue(port)
+        self.web_access_code_edit.setText(
+            repository.get_setting(self.conn, "web_access_code", "")
+        )
 
     def _pick_export_dir(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "选择导出目录")
@@ -193,9 +276,49 @@ class SettingsPage(QWidget):
         repository.set_setting(
             self.conn, "github_token", self.github_token_edit.text().strip()
         )
+        repository.set_setting(
+            self.conn, "llm_base_url", self.llm_base_url_edit.text().strip()
+        )
+        repository.set_setting(
+            self.conn, "llm_api_key", self.llm_api_key_edit.text().strip()
+        )
+        repository.set_setting(
+            self.conn, "llm_model", self.llm_model_edit.text().strip()
+        )
+        repository.set_setting(
+            self.conn,
+            "web_enabled",
+            "1" if self.web_enabled_check.isChecked() else "0",
+        )
+        repository.set_setting(
+            self.conn, "web_port", str(int(self.web_port_spin.value()))
+        )
+        repository.set_setting(
+            self.conn, "web_access_code", self.web_access_code_edit.text().strip()
+        )
         self.conn.commit()
         flash_saved(self.save_button)
         self.on_settings_changed()
+
+    def _test_llm(self) -> None:
+        base_url = self.llm_base_url_edit.text().strip()
+        api_key = self.llm_api_key_edit.text().strip()
+        model = self.llm_model_edit.text().strip()
+        if not base_url or not api_key or not model:
+            QMessageBox.warning(self, "提示", "请先填写接口地址、API Key 和模型名称")
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            reply = llm.test_connection(base_url, api_key, model)
+        except llm.LlmError as exc:
+            QMessageBox.warning(self, "连接失败", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        QMessageBox.information(self, "连接成功", f"接口返回：{reply}")
+
+    def set_web_status(self, text: str) -> None:
+        self.web_status_label.setText(text)
 
     def _clear_cache(self) -> None:
         export_dir = self.export_dir_edit.text().strip() or str(exports_dir())

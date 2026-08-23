@@ -1,4 +1,4 @@
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS years (
@@ -141,6 +141,17 @@ CREATE TABLE IF NOT EXISTS pension_jobs (
   note TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS ai_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_type TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  period_start TEXT NOT NULL DEFAULT '',
+  period_end TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -154,6 +165,7 @@ CREATE INDEX IF NOT EXISTS idx_insurance_items_year ON insurance_items(year_id);
 CREATE INDEX IF NOT EXISTS idx_invest_executions_holding ON invest_executions(holding_id);
 CREATE INDEX IF NOT EXISTS idx_gold_accounts_channel ON gold_accounts(channel);
 CREATE INDEX IF NOT EXISTS idx_pension_jobs_end_year ON pension_jobs(end_year);
+CREATE INDEX IF NOT EXISTS idx_ai_reports_created ON ai_reports(created_at);
 """
 
 

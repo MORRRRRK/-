@@ -6,7 +6,13 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from ... import VERSION_LABEL
 from ..widgets import make_button
 
-CHANGELOG = """V2.5
+CHANGELOG = """V3.0
+· 新增智能报告：接入 OpenAI 兼容大模型，可生成年度/月度/持仓/自定义报告
+· 报告支持 Markdown 预览、复制、导出，生成记录保存在本地数据库
+· 新增局域网只读 Web 端：手机/浏览器通过访问码查看总览、流水、持仓和报告
+· 设置新增大模型接口与局域网访问配置，不包含任何隐私数据外传承诺
+
+V2.5
 · 资产规划新增退休金测算：按省份 2024 计发基数估算，支持多段工作经历
 · 每段工作单独计算，以最新一份工作为准；可保存工作记录、撤销删除
 · 可从工资参数一键填充养老缴费基数与个人比例

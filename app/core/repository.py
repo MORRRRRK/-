@@ -338,6 +338,38 @@ def delete_pension_job(conn: sqlite3.Connection, job_id: int) -> None:
     conn.execute("DELETE FROM pension_jobs WHERE id = ?", (job_id,))
 
 
+def list_ai_reports(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM ai_reports ORDER BY id DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_ai_report(conn: sqlite3.Connection, report: dict[str, Any]) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO ai_reports(
+          report_type, title, period_start, period_end, content, model
+        ) VALUES (
+          :report_type, :title, :period_start, :period_end, :content, :model
+        )
+        """,
+        {
+            "report_type": report.get("report_type", ""),
+            "title": report.get("title", ""),
+            "period_start": report.get("period_start", ""),
+            "period_end": report.get("period_end", ""),
+            "content": report.get("content", ""),
+            "model": report.get("model", ""),
+        },
+    )
+    return int(cur.lastrowid)
+
+
+def delete_ai_report(conn: sqlite3.Connection, report_id: int) -> None:
+    conn.execute("DELETE FROM ai_reports WHERE id = ?", (report_id,))
+
+
 def list_invest_executions(
     conn: sqlite3.Connection, holding_id: int
 ) -> list[dict[str, Any]]:

@@ -34,5 +34,10 @@ def asset_dir() -> Path:
     return base / "app" / "assets"
 
 
+def web_dir() -> Path:
+    base = Path(getattr(sys, "_MEIPASS", app_root()))
+    return base / "app" / "web"
+
+
 def images_dir() -> Path:
     return data_dir() / "images"
