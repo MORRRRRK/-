@@ -8,6 +8,7 @@ if errorlevel 1 goto error
 if not exist "dist\财务软件客户版" mkdir "dist\财务软件客户版"
 echo customer> "dist\财务软件客户版\edition.ini"
 copy /y "dist\updater_helper.exe" "dist\财务软件客户版\updater_helper.exe"
+echo repo=MORRRRRK/finance-releases> "dist\财务软件客户版\update_config.ini"
 echo Done: dist\财务软件客户版\财务软件客户版.exe
 pause
 exit /b 0

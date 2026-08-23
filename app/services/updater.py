@@ -18,6 +18,7 @@ from ..core import paths
 from ..core import repository
 
 GITHUB_API = "https://api.github.com"
+DEFAULT_RELEASE_REPO = "MORRRRRK/finance-releases"
 
 
 class UpdaterError(Exception):
@@ -37,6 +38,8 @@ def update_repo(conn) -> str:
     repo = repository.get_setting(conn, "update_repo", "").strip()
     if not repo:
         repo = update_config().get("repo", "")
+    if not repo:
+        repo = DEFAULT_RELEASE_REPO
     return repo
 
 

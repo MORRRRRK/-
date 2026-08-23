@@ -82,15 +82,18 @@ python tools\migrate_xlsx.py "Z:\04文件\gongzi.xlsx"
 - 发布包只包含 `财务软件.exe`、`updater_helper.exe` 和 `_internal/`。
 - `data/`、`backups/`、`exports/`、图片、数据库和 API Key 一律不进入发布包。
 - 打包脚本会自动检查发布包，如果发现 `finance.db`、`data/`、`backups/`、`exports/` 等内容会直接终止并报错。
-- 建议使用单独的公开发布仓库，开发仓库与个人数据保持隔离。
+- 已启用单独的公开发布仓库 `MORRRRRK/finance-releases`，只存放发布包，不包含源码与个人数据。
 
 发布客户版：
 ```bat
 call .venv\Scripts\activate.bat
 build.bat
-python tools\package_release.py --version 3.0.0 --repo 你的用户名/发布仓库 --tag v3.0.0 --notes "更新说明"
+build_customer.bat
+python tools\package_release.py --version 3.0.0 --repo MORRRRRK/finance-releases --tag v3.0.0 --notes "更新说明"
+python tools\build_customer_setup.py --version 3.0.0
+set GITHUB_TOKEN=你的GitHubToken
+python tools\upload_release.py --version 3.0.0
 ```
-然后上传 `releases\finance-app-2.4.0.zip` 和 `releases\update.json` 到对应 GitHub Release。
 
 ## 打包
 ```bat
@@ -100,7 +103,7 @@ build.bat
 
 ## 开发版与客户版
 - 开发版：运行 `build.bat` 生成 `dist\财务软件\`，数据保存在程序目录 `data/`，支持 GitHub 更新检查。
-- 客户版：运行 `build_customer.bat` 生成 `dist\财务软件客户版\`，不含 GitHub 更新设置，也不包含任何个人数据。
+- 客户版：运行 `build_customer.bat` 生成 `dist\财务软件客户版\`，更新配置指向公开发布仓库，不包含 Token。
 - 生成客户版安装程序：
 ```bat
 python tools\build_customer_setup.py --version 3.0.0
