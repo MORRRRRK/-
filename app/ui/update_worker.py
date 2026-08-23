@@ -16,13 +16,14 @@ class UpdateCheckWorker(QThread):
     finished = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, repo: str, parent=None):
+    def __init__(self, repo: str, token: str = "", parent=None):
         super().__init__(parent)
         self.repo = repo
+        self.token = token
 
     def run(self) -> None:
         try:
-            info = check_for_update(self.repo)
+            info = check_for_update(self.repo, self.token)
         except UpdaterError as exc:
             self.failed.emit(str(exc))
             return
@@ -33,15 +34,18 @@ class UpdateInstallWorker(QThread):
     finished = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, conn, info: dict, backup_dir: Path, parent=None):
+    def __init__(self, conn, info: dict, backup_dir: Path, token: str = "", parent=None):
         super().__init__(parent)
         self.conn = conn
         self.info = info
         self.backup_dir = backup_dir
+        self.token = token
 
     def run(self) -> None:
         try:
-            job_path, helper = prepare_update(self.conn, self.info, self.backup_dir)
+            job_path, helper = prepare_update(
+                self.conn, self.info, self.backup_dir, self.token
+            )
             launch_updater(job_path, helper)
         except UpdaterError as exc:
             self.failed.emit(str(exc))

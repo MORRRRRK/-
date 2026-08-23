@@ -37,14 +37,18 @@ def update_repo(conn) -> str:
     return repository.get_setting(conn, "update_repo", "").strip()
 
 
-def _github_get(url: str) -> dict:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "FinanceApp-Updater",
-        },
-    )
+def update_token(conn) -> str:
+    return repository.get_setting(conn, "github_token", "").strip()
+
+
+def _github_get(url: str, token: str = "", accept: str = "") -> dict:
+    headers = {
+        "Accept": accept or "application/vnd.github+json",
+        "User-Agent": "FinanceApp-Updater",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -56,30 +60,41 @@ def _github_get(url: str) -> dict:
         raise UpdaterError("GitHub 返回内容无法解析") from exc
 
 
-def check_for_update(repo: str) -> dict:
+def check_for_update(repo: str, token: str = "") -> dict:
     """返回最新版本信息；无新版本时返回 None。"""
     repo = repo.strip().strip("/")
     if not repo:
         raise UpdaterError("尚未配置 GitHub 更新仓库，请在“设置”中填写 owner/repo")
-    release = _github_get(f"{GITHUB_API}/repos/{repo}/releases/latest")
+    release = _github_get(f"{GITHUB_API}/repos/{repo}/releases/latest", token)
     tag = str(release.get("tag_name") or "").lstrip("v")
     version = tag or str(release.get("name") or "")
     update_url = ""
+    zip_url = ""
     sha256 = ""
     notes = str(release.get("body") or "")
     for asset in release.get("assets") or []:
         name = str(asset.get("name") or "")
+        asset_url = str(
+            asset.get("url") if token else asset.get("browser_download_url") or ""
+        )
         if name == "update.json":
             try:
-                manifest = _github_get(str(asset.get("browser_download_url") or ""))
+                manifest = _github_get(
+                    asset_url, token, accept="application/octet-stream"
+                )
                 version = str(manifest.get("version") or version)
-                update_url = str(manifest.get("url") or "")
+                if not token:
+                    update_url = str(manifest.get("url") or "")
                 sha256 = str(manifest.get("sha256") or "")
                 notes = str(manifest.get("notes") or notes)
             except Exception:
                 pass
-        elif not update_url and name.startswith("finance-app-") and name.endswith(".zip"):
-            update_url = str(asset.get("browser_download_url") or "")
+        elif name.startswith("finance-app-") and name.endswith(".zip"):
+            zip_url = asset_url
+            if not update_url:
+                update_url = asset_url
+    if token and zip_url:
+        update_url = zip_url
     if not update_url:
         raise UpdaterError("最新 Release 中没有找到客户版更新包")
     return {
@@ -91,8 +106,11 @@ def check_for_update(repo: str) -> dict:
     }
 
 
-def _download(url: str, target: Path) -> None:
-    request = urllib.request.Request(url, headers={"User-Agent": "FinanceApp-Updater"})
+def _download(url: str, target: Path, token: str = "") -> None:
+    headers = {"User-Agent": "FinanceApp-Updater", "Accept": "application/octet-stream"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=30) as response, target.open("wb") as out:
             shutil.copyfileobj(response, out, length=1024 * 1024)
@@ -120,7 +138,12 @@ def _backup_database(conn, backup_dir: Path) -> Path:
     return target
 
 
-def prepare_update(conn, update_info: dict, backup_dir: Path | None = None) -> tuple[Path, Path]:
+def prepare_update(
+    conn,
+    update_info: dict,
+    backup_dir: Path | None = None,
+    token: str = "",
+) -> tuple[Path, Path]:
     """下载并校验更新包，备份数据库，生成更新任务，返回 (任务文件, 助手副本)。"""
     temp_dir = Path(tempfile.gettempdir()) / "finance_app_update"
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -128,7 +151,7 @@ def prepare_update(conn, update_info: dict, backup_dir: Path | None = None) -> t
     zip_path = temp_dir / f"finance-app-{version}.zip"
     if zip_path.exists():
         zip_path.unlink()
-    _download(update_info["url"], zip_path)
+    _download(update_info["url"], zip_path, token)
     expected = update_info.get("sha256") or ""
     if expected:
         actual = _sha256(zip_path)

@@ -25,7 +25,7 @@ from ..core import repository
 from ..core.db import Database
 from ..core.paths import backups_dir, db_path, exports_dir
 from ..services import exporter
-from ..services.updater import is_newer, update_repo
+from ..services.updater import is_newer, update_repo, update_token
 from ..services.importer import MigrationError, import_xlsx
 from .update_worker import UpdateCheckWorker, UpdateInstallWorker
 from .pages.about import AboutPage
@@ -135,6 +135,7 @@ class MainWindow(QMainWindow):
         if self._check_worker is not None and self._check_worker.isRunning():
             return
         repo = update_repo(self.db.conn)
+        token = update_token(self.db.conn)
         if not repo:
             message = "尚未配置 GitHub 更新仓库，请在“设置”中填写 owner/repo"
             if about_page is not None:
@@ -143,7 +144,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "无法检查更新", message)
             return
         self._current_about_page = about_page
-        self._check_worker = UpdateCheckWorker(repo)
+        self._check_worker = UpdateCheckWorker(repo, token)
         self._check_worker.finished.connect(self._on_check_finished)
         self._check_worker.failed.connect(self._on_check_failed)
         self._check_worker.start()
@@ -181,7 +182,10 @@ class MainWindow(QMainWindow):
         backup_dir = Path(
             repository.get_setting(self.db.conn, "backup_dir", str(backups_dir()))
         )
-        self._install_worker = UpdateInstallWorker(self.db.conn, info, backup_dir)
+        token = update_token(self.db.conn)
+        self._install_worker = UpdateInstallWorker(
+            self.db.conn, info, backup_dir, token
+        )
         self._install_worker.finished.connect(self._on_install_finished)
         self._install_worker.failed.connect(self._on_install_failed)
         self._install_worker.start()

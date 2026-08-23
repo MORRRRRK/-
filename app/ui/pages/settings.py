@@ -103,9 +103,17 @@ class SettingsPage(QWidget):
         grid.addWidget(self.update_repo_label, 6, 0)
         self.update_repo_edit = line_edit(placeholder="如 yourname/finance-releases")
         grid.addWidget(self.update_repo_edit, 6, 1)
+        self.github_token_label = QLabel("GitHub Token")
+        grid.addWidget(self.github_token_label, 7, 0)
+        self.github_token_edit = QLineEdit()
+        self.github_token_edit.setEchoMode(QLineEdit.Password)
+        self.github_token_edit.setPlaceholderText("私有仓库更新需要填写，客户版无需填写")
+        grid.addWidget(self.github_token_edit, 7, 1)
         if is_customer():
             self.update_repo_label.setVisible(False)
             self.update_repo_edit.setVisible(False)
+            self.github_token_label.setVisible(False)
+            self.github_token_edit.setVisible(False)
 
         note = QLabel(
             "设置会保存在本地数据库中；未自定义路径时默认使用程序目录下的 "
@@ -113,7 +121,7 @@ class SettingsPage(QWidget):
             "更新仓库填写 GitHub 的 owner/repo。"
         )
         note.setObjectName("fieldLabel")
-        grid.addWidget(note, 7, 0, 1, 3)
+        grid.addWidget(note, 8, 0, 1, 3)
         section.add_layout(grid)
         layout.addWidget(section)
 
@@ -158,6 +166,9 @@ class SettingsPage(QWidget):
             repository.get_setting(self.conn, "backup_dir", str(backups_dir()))
         )
         self.update_repo_edit.setText(repository.get_setting(self.conn, "update_repo", ""))
+        self.github_token_edit.setText(
+            repository.get_setting(self.conn, "github_token", "")
+        )
 
     def _pick_export_dir(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "选择导出目录")
@@ -179,6 +190,9 @@ class SettingsPage(QWidget):
         repository.set_setting(self.conn, "export_dir", self.export_dir_edit.text().strip())
         repository.set_setting(self.conn, "backup_dir", self.backup_dir_edit.text().strip())
         repository.set_setting(self.conn, "update_repo", self.update_repo_edit.text().strip())
+        repository.set_setting(
+            self.conn, "github_token", self.github_token_edit.text().strip()
+        )
         self.conn.commit()
         flash_saved(self.save_button)
         self.on_settings_changed()
