@@ -15,6 +15,7 @@ ALLOWED_TOP = {
     "updater_helper.exe",
     "_internal",
     "edition.ini",
+    "update_config.ini",
 }
 CSC = Path(
     r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
