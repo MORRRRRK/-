@@ -88,7 +88,7 @@ python tools\migrate_xlsx.py "Z:\04文件\gongzi.xlsx"
 ```bat
 call .venv\Scripts\activate.bat
 build.bat
-python tools\package_release.py --version 2.4.0 --repo 你的用户名/发布仓库 --tag v2.4.0 --notes "更新说明"
+python tools\package_release.py --version 3.0.0 --repo 你的用户名/发布仓库 --tag v3.0.0 --notes "更新说明"
 ```
 然后上传 `releases\finance-app-2.4.0.zip` 和 `releases\update.json` 到对应 GitHub Release。
 
@@ -103,7 +103,7 @@ build.bat
 - 客户版：运行 `build_customer.bat` 生成 `dist\财务软件客户版\`，不含 GitHub 更新设置，也不包含任何个人数据。
 - 生成客户版安装程序：
 ```bat
-python tools\build_customer_setup.py --version 2.4.0
+python tools\build_customer_setup.py --version 3.0.0
 ```
 安装程序会输出到桌面 `个人财务软件客户版安装程序.exe`，默认安装到：
 `%LOCALAPPDATA%\Programs\个人财务软件客户版`
