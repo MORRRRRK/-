@@ -74,6 +74,7 @@ def _request(
     password: str,
     data: bytes | None = None,
     timeout: int = 60,
+    extra_headers: dict[str, str] | None = None,
 ) -> bytes:
     token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
     headers = {
@@ -83,6 +84,8 @@ def _request(
     }
     if data is not None:
         headers["Content-Type"] = "application/octet-stream"
+    if extra_headers:
+        headers.update(extra_headers)
     request = urllib.request.Request(
         url,
         data=data,
@@ -100,11 +103,19 @@ def _request(
 
 def _remote_exists(url: str, username: str, password: str) -> bool:
     try:
-        _request("HEAD", url, username, password)
+        _request(
+            "PROPFIND",
+            url,
+            username,
+            password,
+            extra_headers={"Depth": "0"},
+        )
         return True
     except CloudSyncError as exc:
         if exc.status_code == 404:
             return False
+        if exc.status_code in (401, 403):
+            raise
         if exc.status_code in (405, 501):
             try:
                 _request("GET", url, username, password)
@@ -143,13 +154,32 @@ def _upload_remote(url: str, username: str, password: str, data: bytes) -> None:
 def test_connection(base_url: str, username: str, password: str) -> str:
     folder = (base_url or "").strip().rstrip("/") + "/"
     try:
-        _request("HEAD", folder, username, password, timeout=30)
+        _request(
+            "PROPFIND",
+            folder,
+            username,
+            password,
+            timeout=30,
+            extra_headers={"Depth": "0"},
+        )
         return "连接成功"
     except CloudSyncError as exc:
         if exc.status_code == 404:
             return "连接成功（目录不存在，首次同步会自动创建）"
         if exc.status_code in (401, 403):
             raise CloudSyncError("账号或密码错误，请检查 WebDAV 凭据", exc.status_code)
+        if exc.status_code in (405, 501):
+            try:
+                _request("HEAD", folder, username, password, timeout=30)
+                return "连接成功"
+            except CloudSyncError as head_exc:
+                if head_exc.status_code == 404:
+                    return "连接成功（目录不存在，首次同步会自动创建）"
+                if head_exc.status_code in (401, 403):
+                    raise CloudSyncError(
+                        "账号或密码错误，请检查 WebDAV 凭据", head_exc.status_code
+                    )
+                raise
         raise
 
 

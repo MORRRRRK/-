@@ -6,7 +6,10 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from ... import VERSION_LABEL
 from ..widgets import make_button
 
-CHANGELOG = """V3.1
+CHANGELOG = """V3.1.1
+· 修复 WebDAV 测试连接误报：改用标准 PROPFIND 探测，坚果云兼容性更好
+
+V3.1
 · 新增加密云同步：数据库加密后上传到 WebDAV（坚果云/Nextcloud/NAS）
 · 支持手动同步、从云端恢复、启动时自动同步
 · 云端只保存加密文件，同步密码不进入发布包

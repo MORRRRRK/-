@@ -43,6 +43,14 @@ class MockWebDAVHandler(BaseHTTPRequestHandler):
     def do_MKCOL(self) -> None:
         self._send(201)
 
+    def do_PROPFIND(self) -> None:
+        if self.path in self.store or self.path.endswith("/"):
+            self.send_response(207)
+        else:
+            self.send_response(404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
 
 class CloudSyncTest(unittest.TestCase):
     @classmethod
@@ -69,6 +77,7 @@ class CloudSyncTest(unittest.TestCase):
         self.base = f"http://127.0.0.1:{self.port}/dav"
 
     def test_roundtrip_and_wrong_password(self) -> None:
+        self.assertIn("连接成功", cloud_sync.test_connection(self.base, "u", "p"))
         result = cloud_sync.push_sync(
             self.db, self.base, "u", "p", "password123", self.tmp / "backups"
         )
