@@ -85,6 +85,18 @@ build.bat
 ```
 打包结果在 `dist\财务软件\`，包含 `财务软件.exe`、`updater_helper.exe` 和 `_internal/`。
 
+## 开发版与客户版
+- 开发版：运行 `build.bat` 生成 `dist\财务软件\`，数据保存在程序目录 `data/`，支持 GitHub 更新检查。
+- 客户版：运行 `build_customer.bat` 生成 `dist\财务软件客户版\`，不含 GitHub 更新设置，也不包含任何个人数据。
+- 生成客户版安装程序：
+```bat
+python tools\build_customer_setup.py --version 2.4.0
+```
+安装程序会输出到桌面 `个人财务软件客户版安装程序.exe`，默认安装到：
+`%LOCALAPPDATA%\Programs\个人财务软件客户版`
+- 客户版数据与开发版完全隔离，同一台电脑可以同时运行开发和客户两版。
+- 客户版不提供 GitHub 在线更新；更新时重新运行安装程序，已有 `data/` 会自动保留。
+
 ## 版本规则
 - 当前版本：V2.4。
 - 重大功能或数据模型变更：V2.0、V3.0。
