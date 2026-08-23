@@ -50,6 +50,7 @@ class MainWindow(QMainWindow):
         self.db = Database()
         self._check_worker = None
         self._install_worker = None
+        self._check_timer: QTimer | None = None
         self._current_about_page = None
         self.web_server: WebService | None = None
         self._build_menus()
@@ -171,6 +172,8 @@ class MainWindow(QMainWindow):
 
     def _run_update_check(self, quiet: bool = False, about_page=None) -> None:
         if self._check_worker is not None and self._check_worker.isRunning():
+            if about_page is not None:
+                self._current_about_page = about_page
             return
         repo = update_repo(self.db.conn)
         token = update_token(self.db.conn)
@@ -185,10 +188,16 @@ class MainWindow(QMainWindow):
         self._check_worker = UpdateCheckWorker(repo, token, is_customer())
         self._check_worker.finished.connect(self._on_check_finished)
         self._check_worker.failed.connect(self._on_check_failed)
+        self._check_timer = QTimer(self)
+        self._check_timer.setSingleShot(True)
+        self._check_timer.timeout.connect(self._on_check_timeout)
+        self._check_timer.start(30000)
         self._check_worker.start()
 
     def _on_check_finished(self, info: dict) -> None:
         self._check_worker = None
+        if self._check_timer is not None:
+            self._check_timer.stop()
         if is_newer(info.get("version", ""), __version__):
             message = (
                 f"发现新版本 V{info.get('version')}\n\n"
@@ -211,8 +220,17 @@ class MainWindow(QMainWindow):
 
     def _on_check_failed(self, message: str) -> None:
         self._check_worker = None
+        if self._check_timer is not None:
+            self._check_timer.stop()
         if self._current_about_page is not None:
             self._current_about_page.update_status.setText(message)
+
+    def _on_check_timeout(self) -> None:
+        if self._check_worker is not None and self._check_worker.isRunning():
+            if self._current_about_page is not None:
+                self._current_about_page.update_status.setText(
+                    "检查更新超时，请检查网络后重试"
+                )
 
     def _install_update(self, info: dict) -> None:
         if self._install_worker is not None and self._install_worker.isRunning():

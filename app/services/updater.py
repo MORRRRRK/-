@@ -18,6 +18,7 @@ from ..core import paths
 from ..core import repository
 
 GITHUB_API = "https://api.github.com"
+GITHUB_WEB = "https://github.com"
 DEFAULT_RELEASE_REPO = "MORRRRRK/finance-releases"
 
 
@@ -75,7 +76,7 @@ def _github_get(url: str, token: str = "", accept: str = "") -> dict:
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise UpdaterError(f"GitHub 请求失败（HTTP {exc.code}）") from exc
@@ -90,6 +91,27 @@ def check_for_update(repo: str, token: str = "", customer: bool = False) -> dict
     repo = repo.strip().strip("/")
     if not repo:
         raise UpdaterError("尚未配置 GitHub 更新仓库，请在“设置”中填写 owner/repo")
+    manifest_name = "customer_update.json" if customer else "update.json"
+    try:
+        manifest = _github_get(
+            f"{GITHUB_WEB}/{repo}/releases/latest/download/{manifest_name}",
+            token,
+            accept="application/octet-stream",
+        )
+        version = str(manifest.get("version") or "")
+        update_url = str(manifest.get("url") or "")
+        sha256 = str(manifest.get("sha256") or "")
+        notes = str(manifest.get("notes") or "")
+        if version and update_url and sha256:
+            return {
+                "version": version,
+                "url": update_url,
+                "sha256": sha256,
+                "notes": notes,
+                "current_version": __version__,
+            }
+    except UpdaterError:
+        pass
     release = _github_get(f"{GITHUB_API}/repos/{repo}/releases/latest", token)
     tag = str(release.get("tag_name") or "").lstrip("v")
     version = tag or str(release.get("name") or "")
@@ -97,7 +119,6 @@ def check_for_update(repo: str, token: str = "", customer: bool = False) -> dict
     zip_url = ""
     sha256 = ""
     notes = str(release.get("body") or "")
-    manifest_name = "customer_update.json" if customer else "update.json"
     zip_prefix = "customer-app-" if customer else "finance-app-"
     for asset in release.get("assets") or []:
         name = str(asset.get("name") or "")

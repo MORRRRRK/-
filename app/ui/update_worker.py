@@ -28,6 +28,9 @@ class UpdateCheckWorker(QThread):
         except UpdaterError as exc:
             self.failed.emit(str(exc))
             return
+        except Exception as exc:
+            self.failed.emit(f"检查更新失败：{exc}")
+            return
         self.finished.emit(info)
 
 
