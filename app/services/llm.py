@@ -14,6 +14,10 @@ class LlmError(Exception):
     pass
 
 
+DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
+DEFAULT_MODEL = "deepseek-chat"
+
+
 def normalize_chat_url(base_url: str) -> str:
     url = (base_url or "").strip().rstrip("/")
     if not url:

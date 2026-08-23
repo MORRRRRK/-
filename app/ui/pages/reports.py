@@ -218,9 +218,13 @@ class ReportsPage(QScrollArea):
                 self, "需要确认", "请先勾选“已了解并同意发送完整财务数据”"
             )
             return
-        base_url = repository.get_setting(self.conn, "llm_base_url", "").strip()
+        base_url = repository.get_setting(
+            self.conn, "llm_base_url", llm.DEFAULT_BASE_URL
+        ).strip() or llm.DEFAULT_BASE_URL
         api_key = repository.get_setting(self.conn, "llm_api_key", "").strip()
-        model = repository.get_setting(self.conn, "llm_model", "").strip()
+        model = repository.get_setting(
+            self.conn, "llm_model", llm.DEFAULT_MODEL
+        ).strip() or llm.DEFAULT_MODEL
         if not base_url or not api_key or not model:
             QMessageBox.warning(
                 self, "缺少配置", "请先在“设置”中填写大模型接口地址、API Key 和模型名称"

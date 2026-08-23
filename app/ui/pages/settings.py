@@ -233,13 +233,13 @@ class SettingsPage(QWidget):
             repository.get_setting(self.conn, "github_token", "")
         )
         self.llm_base_url_edit.setText(
-            repository.get_setting(self.conn, "llm_base_url", "")
+            repository.get_setting(self.conn, "llm_base_url", llm.DEFAULT_BASE_URL)
         )
         self.llm_api_key_edit.setText(
             repository.get_setting(self.conn, "llm_api_key", "")
         )
         self.llm_model_edit.setText(
-            repository.get_setting(self.conn, "llm_model", "")
+            repository.get_setting(self.conn, "llm_model", llm.DEFAULT_MODEL)
         )
         self.web_enabled_check.setChecked(
             repository.get_setting(self.conn, "web_enabled", "0") == "1"
