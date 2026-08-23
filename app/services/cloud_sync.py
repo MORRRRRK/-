@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -62,9 +63,17 @@ def remote_url(base_url: str) -> str:
     base = (base_url or "").strip().rstrip("/")
     if not base:
         raise CloudSyncError("请先填写 WebDAV 地址")
-    if base.endswith(REMOTE_NAME):
-        return base
-    return base + "/" + REMOTE_NAME
+    parts = urllib.parse.urlsplit(base)
+    segments = [
+        urllib.parse.quote(segment)
+        for segment in parts.path.split("/")
+        if segment
+    ]
+    if segments and segments[-1] == REMOTE_NAME:
+        path = "/" + "/".join(segments)
+    else:
+        path = "/" + "/".join(segments) + "/" + REMOTE_NAME
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
 def _request(
@@ -137,6 +146,7 @@ def _download_remote(url: str, username: str, password: str) -> bytes:
 
 
 def _upload_remote(url: str, username: str, password: str, data: bytes) -> None:
+    _ensure_remote_path(url, username, password)
     try:
         _request("PUT", url, username, password, data)
         return
@@ -149,6 +159,22 @@ def _upload_remote(url: str, username: str, password: str, data: bytes) -> None:
     except CloudSyncError:
         pass
     _request("PUT", url, username, password, data)
+
+
+def _ensure_remote_path(url: str, username: str, password: str) -> None:
+    """按需创建 WebDAV 路径中的每一级目录，避免 PUT 返回 404。"""
+    parts = urllib.parse.urlsplit(url)
+    segments = [segment for segment in parts.path.split("/") if segment]
+    if not segments:
+        return
+    dirs = segments[:-1]
+    base = f"{parts.scheme}://{parts.netloc}"
+    for index in range(1, len(dirs) + 1):
+        folder = base + "/" + "/".join(dirs[:index]) + "/"
+        try:
+            _request("MKCOL", folder, username, password, timeout=30)
+        except CloudSyncError:
+            pass
 
 
 def test_connection(base_url: str, username: str, password: str) -> str:

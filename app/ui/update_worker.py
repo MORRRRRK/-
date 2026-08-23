@@ -37,6 +37,7 @@ class UpdateCheckWorker(QThread):
 class UpdateInstallWorker(QThread):
     finished = Signal(str)
     failed = Signal(str)
+    progress = Signal(int, int)
 
     def __init__(self, conn, info: dict, backup_dir: Path, token: str = "", parent=None):
         super().__init__(parent)
@@ -48,7 +49,11 @@ class UpdateInstallWorker(QThread):
     def run(self) -> None:
         try:
             job_path, helper = prepare_update(
-                self.conn, self.info, self.backup_dir, self.token
+                self.conn,
+                self.info,
+                self.backup_dir,
+                self.token,
+                self.progress.emit,
             )
             launch_updater(job_path, helper)
         except UpdaterError as exc:

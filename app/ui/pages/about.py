@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ... import VERSION_LABEL
 from ..widgets import make_button
 
-CHANGELOG = """V3.1.1
+CHANGELOG = """V3.1.2
+· 修复 WebDAV 深层目录同步 404，自动创建坚果云目录
+· 设置页改为可滚动，窗口缩小时不再挤压
+· 更新下载新增进度条，并加强网络超时保护
+· 设置页新增“开放防火墙”按钮，解决手机无法访问局域网 Web
+· 输入框内容不再被页面刷新覆盖
+
+V3.1.1
 · 修复 WebDAV 测试连接误报：改用标准 PROPFIND 探测，坚果云兼容性更好
 
 V3.1
@@ -123,9 +136,30 @@ class AboutPage(QWidget):
         update_row.addWidget(self.update_status, 1)
         layout.addLayout(update_row)
 
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
     def _check(self) -> None:
         self.update_status.setText("正在检查更新…")
         self.on_check_update(self)
 
     def refresh(self) -> None:
         pass
+
+    def set_progress(self, current: int, total: int) -> None:
+        if total <= 0:
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setVisible(True)
+            return
+        percent = max(0, min(100, int(current * 100 / total)))
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(percent)
+        self.progress_bar.setVisible(True)
+        self.update_status.setText(f"正在下载并校验更新包… {percent}%")
+
+    def clear_progress(self) -> None:
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -45,19 +47,22 @@ THEME_MODES = [
 ]
 
 
-class SettingsPage(QWidget):
+class SettingsPage(QScrollArea):
     def __init__(self, conn, on_settings_changed, on_cloud_action=None):
         super().__init__()
         self.conn = conn
         self.on_settings_changed = on_settings_changed
         self.on_cloud_action = on_cloud_action
+        self.setWidgetResizable(True)
+        self._content = QWidget()
+        self.setWidget(self._content)
         self._build()
         self._load()
 
     def _build(self) -> None:
-        layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self._content)
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setSpacing(14)
 
         section = Section("常用设置")
         grid = QGridLayout()
@@ -179,13 +184,16 @@ class SettingsPage(QWidget):
         self.web_status_label.setObjectName("summaryValue")
         self.web_status_label.setWordWrap(True)
         web_grid.addWidget(self.web_status_label, 3, 0, 1, 3)
+        self.web_firewall_button = make_button("开放防火墙（需管理员）")
+        self.web_firewall_button.clicked.connect(self._open_firewall)
+        web_grid.addWidget(self.web_firewall_button, 4, 0)
         web_note = QLabel(
             "开启后同一局域网的手机/电脑可用浏览器查看，Web 端只读；"
             "端口默认 8765，访问码用于登录保护。"
         )
         web_note.setObjectName("fieldLabel")
         web_note.setWordWrap(True)
-        web_grid.addWidget(web_note, 4, 0, 1, 3)
+        web_grid.addWidget(web_note, 5, 0, 1, 3)
         web_section.add_layout(web_grid)
         layout.addWidget(web_section)
 
@@ -424,6 +432,29 @@ class SettingsPage(QWidget):
     def set_web_status(self, text: str) -> None:
         self.web_status_label.setText(text)
 
+    def _open_firewall(self) -> None:
+        port = int(self.web_port_spin.value())
+        args = (
+            "advfirewall firewall add rule "
+            f'name="个人财务软件局域网访问" dir=in action=allow '
+            f"protocol=TCP localport={port}"
+        )
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", "netsh", args, None, 1
+        )
+        if result > 32:
+            QMessageBox.information(
+                self,
+                "已提交",
+                "已请求系统开放防火墙端口，请在管理员确认窗口中点击“是”。",
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "未完成",
+                "未能弹出管理员确认窗口，请在 Windows 防火墙中手动放行该端口。",
+            )
+
     def set_cloud_status(self, text: str) -> None:
         self.cloud_status_label.setText(text)
 
@@ -474,4 +505,5 @@ class SettingsPage(QWidget):
         QMessageBox.information(self, "清理完成", f"已清除 {removed} 个缓存文件。")
 
     def refresh(self) -> None:
-        self._load()
+        # 不重新加载设置，避免覆盖用户正在填写的内容。
+        pass

@@ -344,12 +344,15 @@ class MainWindow(QMainWindow):
         )
         self._install_worker.finished.connect(self._on_install_finished)
         self._install_worker.failed.connect(self._on_install_failed)
+        self._install_worker.progress.connect(self._on_install_progress)
         self._install_worker.start()
         if self._current_about_page is not None:
             self._current_about_page.update_status.setText("正在下载并校验更新包…")
 
     def _on_install_finished(self, version: str) -> None:
         self._install_worker = None
+        if self._current_about_page is not None:
+            self._current_about_page.clear_progress()
         QMessageBox.information(
             self,
             "更新已启动",
@@ -359,9 +362,15 @@ class MainWindow(QMainWindow):
 
     def _on_install_failed(self, message: str) -> None:
         self._install_worker = None
+        if self._current_about_page is not None:
+            self._current_about_page.clear_progress()
         QMessageBox.warning(
             self, "更新失败", message + "\n\n当前版本不受影响，可继续使用。"
         )
+
+    def _on_install_progress(self, current: int, total: int) -> None:
+        if self._current_about_page is not None:
+            self._current_about_page.set_progress(current, total)
 
     def _backup(self) -> None:
         target = exporter.backup_database(

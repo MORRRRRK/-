@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import tempfile
@@ -154,14 +155,29 @@ def check_for_update(repo: str, token: str = "", customer: bool = False) -> dict
     }
 
 
-def _download(url: str, target: Path, token: str = "") -> None:
+def _download(
+    url: str,
+    target: Path,
+    token: str = "",
+    progress_callback=None,
+) -> None:
+    socket.setdefaulttimeout(30)
     headers = {"User-Agent": "FinanceApp-Updater", "Accept": "application/octet-stream"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=30) as response, target.open("wb") as out:
-            shutil.copyfileobj(response, out, length=1024 * 1024)
+            total = int(response.headers.get("Content-Length") or 0)
+            received = 0
+            while True:
+                chunk = response.read(256 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+                received += len(chunk)
+                if progress_callback:
+                    progress_callback(received, total)
     except urllib.error.HTTPError as exc:
         raise UpdaterError(f"下载失败（HTTP {exc.code}）") from exc
     except urllib.error.URLError as exc:
@@ -191,6 +207,7 @@ def prepare_update(
     update_info: dict,
     backup_dir: Path | None = None,
     token: str = "",
+    progress_callback=None,
 ) -> tuple[Path, Path]:
     """下载并校验更新包，备份数据库，生成更新任务，返回 (任务文件, 助手副本)。"""
     temp_dir = Path(tempfile.gettempdir()) / "finance_app_update"
@@ -199,7 +216,7 @@ def prepare_update(
     zip_path = temp_dir / f"finance-app-{version}.zip"
     if zip_path.exists():
         zip_path.unlink()
-    _download(update_info["url"], zip_path, token)
+    _download(update_info["url"], zip_path, token, progress_callback)
     expected = update_info.get("sha256") or ""
     if expected:
         actual = _sha256(zip_path)
