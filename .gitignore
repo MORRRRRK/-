@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+data/
+exports/
+backups/
+dist/
+build/
+releases/
+edition.ini
+*.spec
