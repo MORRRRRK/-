@@ -80,11 +80,13 @@ def main() -> None:
     parser.add_argument("--version", default="2.4.0")
     parser.add_argument(
         "--desktop",
-        default=str(Path.home() / "Desktop"),
+        default="D:/Desktop",
         help="安装程序输出目录",
     )
     args = parser.parse_args()
-    output = build(args.version, Path(args.desktop))
+    desktop = Path(args.desktop)
+    desktop.mkdir(parents=True, exist_ok=True)
+    output = build(args.version, desktop)
     print("客户版安装程序：", output)
 
 

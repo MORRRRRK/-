@@ -108,7 +108,7 @@ build.bat
 ```bat
 python tools\build_customer_setup.py --version 3.0.0
 ```
-安装程序会输出到桌面 `个人财务软件客户版安装程序.exe`，默认安装到：
+安装程序会输出到 `D:\Desktop\个人财务软件客户版安装程序.exe`，默认安装到：
 `%LOCALAPPDATA%\Programs\个人财务软件客户版`
 - 客户版数据与开发版完全隔离，同一台电脑可以同时运行开发和客户两版。
 - 客户版支持软件内直接更新，更新只替换程序文件，已有 `data/` 自动保留。
