@@ -6,7 +6,12 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from ... import VERSION_LABEL
 from ..widgets import make_button
 
-CHANGELOG = """V2.4
+CHANGELOG = """V2.5
+· 资产规划新增退休金测算：按省份 2024 计发基数估算，支持多段工作经历
+· 每段工作单独计算，以最新一份工作为准；可保存工作记录、撤销删除
+· 可从工资参数一键填充养老缴费基数与个人比例
+
+V2.4
 · 客户版在线更新：启动检查 + 手动检查，GitHub Releases 分发
 · 更新前自动备份数据库，更新只替换程序文件，数据不丢失
 

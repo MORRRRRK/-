@@ -38,6 +38,7 @@ def export_csv(conn: sqlite3.Connection, exports_dir: Path) -> list[Path]:
         "holdings": repository.list_holdings(conn),
         "gold_accounts": repository.list_gold_accounts(conn),
         "goals": repository.list_goals(conn),
+        "pension_jobs": repository.list_pension_jobs(conn),
     }
     for name, rows in tables.items():
         path = exports_dir / f"{name}.csv"

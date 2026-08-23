@@ -1,4 +1,4 @@
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS years (
@@ -131,6 +131,16 @@ CREATE TABLE IF NOT EXISTS goals (
   note TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS pension_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  province TEXT NOT NULL DEFAULT '',
+  start_year INTEGER NOT NULL,
+  end_year INTEGER NOT NULL,
+  monthly_base REAL NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -143,6 +153,7 @@ CREATE INDEX IF NOT EXISTS idx_monthly_images_year_month ON monthly_images(year_
 CREATE INDEX IF NOT EXISTS idx_insurance_items_year ON insurance_items(year_id);
 CREATE INDEX IF NOT EXISTS idx_invest_executions_holding ON invest_executions(holding_id);
 CREATE INDEX IF NOT EXISTS idx_gold_accounts_channel ON gold_accounts(channel);
+CREATE INDEX IF NOT EXISTS idx_pension_jobs_end_year ON pension_jobs(end_year);
 """
 
 

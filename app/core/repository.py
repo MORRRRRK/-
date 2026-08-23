@@ -288,6 +288,56 @@ def delete_goal(conn: sqlite3.Connection, goal_id: int) -> None:
     conn.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
 
 
+def list_pension_jobs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM pension_jobs ORDER BY end_year, id"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_pension_job(conn: sqlite3.Connection, job: dict[str, Any]) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO pension_jobs(
+          name, province, start_year, end_year, monthly_base, note
+        ) VALUES (
+          :name, :province, :start_year, :end_year, :monthly_base, :note
+        )
+        """,
+        {
+            "name": job.get("name", ""),
+            "province": job.get("province", ""),
+            "start_year": int(job.get("start_year", 0)),
+            "end_year": int(job.get("end_year", 0)),
+            "monthly_base": float(job.get("monthly_base", 0.0) or 0.0),
+            "note": job.get("note", ""),
+        },
+    )
+    return int(cur.lastrowid)
+
+
+def update_pension_job(
+    conn: sqlite3.Connection, job_id: int, job: dict[str, Any]
+) -> None:
+    conn.execute(
+        """
+        UPDATE pension_jobs SET
+          name = :name, province = :province,
+          start_year = :start_year, end_year = :end_year,
+          monthly_base = :monthly_base, note = :note
+        WHERE id = :id
+        """,
+        {
+            **job,
+            "id": job_id,
+        },
+    )
+
+
+def delete_pension_job(conn: sqlite3.Connection, job_id: int) -> None:
+    conn.execute("DELETE FROM pension_jobs WHERE id = ?", (job_id,))
+
+
 def list_invest_executions(
     conn: sqlite3.Connection, holding_id: int
 ) -> list[dict[str, Any]]:
@@ -393,6 +443,7 @@ def clear_imported_data(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM gold_accounts")
     conn.execute("DELETE FROM invest_executions")
     conn.execute("DELETE FROM goals")
+    conn.execute("DELETE FROM pension_jobs")
     conn.execute("DELETE FROM monthly_images")
     conn.execute("DELETE FROM large_items")
     conn.execute("DELETE FROM monthly_records")
