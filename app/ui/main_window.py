@@ -3,8 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QAbstractItemView
 from PySide6.QtWidgets import (
     QApplication,
@@ -29,6 +28,7 @@ from ..services.web_server import WebService
 from ..services.updater import is_newer, update_repo, update_token
 from ..services.importer import MigrationError, import_xlsx
 from .update_worker import UpdateCheckWorker, UpdateInstallWorker
+from .sync_worker import CloudSyncWorker
 from .pages.about import AboutPage
 from .pages.holdings import HoldingsPage
 from .pages.insurance import InsurancePage
@@ -37,6 +37,7 @@ from .pages.overview import OverviewPage
 from .pages.planning import PlanningPage
 from .pages.reports import ReportsPage
 from .pages.settings import SettingsPage
+from .theme import apply_theme
 
 
 class MainWindow(QMainWindow):
@@ -50,6 +51,9 @@ class MainWindow(QMainWindow):
         self.db = Database()
         self._check_worker = None
         self._install_worker = None
+        self._cloud_worker: CloudSyncWorker | None = None
+        self._cloud_mode = ""
+        self._cloud_quiet = False
         self._check_timer: QTimer | None = None
         self._current_about_page = None
         self.web_server: WebService | None = None
@@ -58,6 +62,7 @@ class MainWindow(QMainWindow):
         self.refresh_all()
         self._apply_style()
         self._apply_web_settings()
+        QTimer.singleShot(3000, self._startup_cloud_sync)
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -83,7 +88,9 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.reports_page = ReportsPage(self.db.conn, self.refresh_all)
-        self.settings_page = SettingsPage(self.db.conn, self._settings_changed)
+        self.settings_page = SettingsPage(
+            self.db.conn, self._settings_changed, self._cloud_action
+        )
         self.about_page = AboutPage(self.db.conn, self._check_update)
         self.pages = [
             OverviewPage(self.db.conn),
@@ -157,6 +164,99 @@ class MainWindow(QMainWindow):
         self.settings_page.set_web_status(
             f"已启动，本机：{urls['local']}  局域网：{urls['lan']}"
         )
+
+    def _startup_cloud_sync(self) -> None:
+        if repository.get_setting(self.db.conn, "cloud_sync_enabled", "0") != "1":
+            return
+        if repository.get_setting(self.db.conn, "cloud_sync_startup", "0") != "1":
+            return
+        config = self._cloud_config_from_settings()
+        if config.get("base_url"):
+            self._start_cloud_worker("push", config, quiet=True)
+
+    def _cloud_config_from_settings(self) -> dict[str, str]:
+        return {
+            "base_url": repository.get_setting(
+                self.db.conn, "cloud_sync_webdav_url", ""
+            ).strip(),
+            "username": repository.get_setting(
+                self.db.conn, "cloud_sync_username", ""
+            ).strip(),
+            "password": repository.get_setting(
+                self.db.conn, "cloud_sync_password", ""
+            ),
+            "sync_password": repository.get_setting(
+                self.db.conn, "cloud_sync_key", ""
+            ),
+        }
+
+    def _cloud_action(self, mode: str, config: dict[str, str]) -> None:
+        self._start_cloud_worker(mode, config, quiet=False)
+
+    def _start_cloud_worker(
+        self, mode: str, config: dict[str, str], quiet: bool = False
+    ) -> None:
+        if self._cloud_worker is not None and self._cloud_worker.isRunning():
+            self.settings_page.set_cloud_status("云同步正在进行中，请稍候")
+            return
+        backup_dir = Path(
+            repository.get_setting(self.db.conn, "backup_dir", str(backups_dir()))
+        )
+        self._cloud_mode = mode
+        self._cloud_quiet = quiet
+        self._cloud_worker = CloudSyncWorker(
+            mode, db_path(), config, backup_dir, self
+        )
+        self._cloud_worker.finished.connect(self._on_cloud_finished)
+        self._cloud_worker.failed.connect(self._on_cloud_failed)
+        if not quiet:
+            labels = {
+                "push": "正在上传加密同步文件…",
+                "pull": "正在下载并校验云端文件…",
+                "test": "正在测试 WebDAV 连接…",
+            }
+            self.settings_page.set_cloud_status(labels.get(mode, "正在云同步…"))
+        self._cloud_worker.start()
+
+    def _on_cloud_finished(self, result: dict) -> None:
+        self._cloud_worker = None
+        mode = self._cloud_mode
+        if mode == "push":
+            message = str(result.get("message", "同步成功"))
+            if result.get("conflict_saved"):
+                message += f"；云端旧文件已备份到 {result.get('conflict_path')}"
+            self.settings_page.set_cloud_status(message)
+            if not self._cloud_quiet:
+                QMessageBox.information(self, "云同步完成", message)
+        elif mode == "pull":
+            self._apply_cloud_restore(Path(str(result.get("restore_path", ""))))
+        elif mode == "test":
+            self.settings_page.set_cloud_status(str(result.get("message", "连接成功")))
+
+    def _on_cloud_failed(self, message: str) -> None:
+        self._cloud_worker = None
+        self.settings_page.set_cloud_status(message)
+        if not self._cloud_quiet:
+            QMessageBox.warning(self, "云同步失败", message)
+
+    def _apply_cloud_restore(self, restore_path: Path) -> None:
+        if not restore_path.exists():
+            QMessageBox.warning(self, "恢复失败", "云端文件不存在")
+            return
+        if self.web_server is not None:
+            self.web_server.stop()
+            self.web_server = None
+        exporter.backup_database(self.db.path, backups_dir())
+        self.db.close()
+        shutil.copy2(restore_path, db_path())
+        restore_path.unlink(missing_ok=True)
+        self.db = Database()
+        self._build_ui()
+        self.refresh_all()
+        self._apply_style()
+        self._apply_web_settings()
+        self.settings_page.set_cloud_status("已从云端恢复")
+        QMessageBox.information(self, "恢复完成", "已从云端恢复数据库。")
 
     def closeEvent(self, event) -> None:
         if self.web_server is not None:
@@ -321,245 +421,4 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "导入完成", "Excel 数据已导入并通过对账。")
 
     def _apply_style(self) -> None:
-        from PySide6.QtGui import QColor, QGuiApplication, QPalette
-        from PySide6.QtWidgets import QApplication
-        from ..core import repository
-
-        try:
-            font_size = int(repository.get_setting(self.db.conn, "font_size", "10"))
-        except ValueError:
-            font_size = 10
-        accent = repository.get_setting(self.db.conn, "theme_color", "#2563eb")
-        theme_mode = repository.get_setting(self.db.conn, "theme_mode", "system")
-        if theme_mode == "dark":
-            dark = True
-        elif theme_mode == "light":
-            dark = False
-        else:
-            dark = QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
-        QApplication.instance().setFont(QFont("Microsoft YaHei UI", font_size))
-
-        app = QApplication.instance()
-        if dark:
-            palette = QPalette()
-            palette.setColor(QPalette.Window, QColor("#1f2630"))
-            palette.setColor(QPalette.WindowText, QColor("#e5e7eb"))
-            palette.setColor(QPalette.Base, QColor("#232a36"))
-            palette.setColor(QPalette.AlternateBase, QColor("#293240"))
-            palette.setColor(QPalette.Text, QColor("#e5e7eb"))
-            palette.setColor(QPalette.Button, QColor("#2a3340"))
-            palette.setColor(QPalette.ButtonText, QColor("#e5e7eb"))
-            palette.setColor(QPalette.Highlight, QColor(accent))
-            palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-            palette.setColor(QPalette.ToolTipBase, QColor("#2a3340"))
-            palette.setColor(QPalette.ToolTipText, QColor("#e5e7eb"))
-        else:
-            palette = QPalette()
-            palette.setColor(QPalette.Window, QColor("#f5f6f8"))
-            palette.setColor(QPalette.WindowText, QColor("#1f2430"))
-            palette.setColor(QPalette.Base, QColor("#ffffff"))
-            palette.setColor(QPalette.AlternateBase, QColor("#f8fafc"))
-            palette.setColor(QPalette.Text, QColor("#1f2430"))
-            palette.setColor(QPalette.Button, QColor("#eef0f4"))
-            palette.setColor(QPalette.ButtonText, QColor("#1f2430"))
-            palette.setColor(QPalette.Highlight, QColor(accent))
-            palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-            palette.setColor(QPalette.ToolTipBase, QColor("#ffffff"))
-            palette.setColor(QPalette.ToolTipText, QColor("#1f2430"))
-        app.setPalette(palette)
-
-        colors = _theme_colors(dark)
-        style = """
-            QMainWindow, QWidget { background: __BG__; color: __TEXT__; }
-            QListWidget#nav {
-                background: __NAV_BG__;
-                color: __NAV_TEXT__;
-                border: none;
-                font-size: 14px;
-                padding-top: 10px;
-            }
-            QListWidget#nav::item {
-                height: 44px;
-                padding-left: 18px;
-                border: none;
-            }
-            QListWidget#nav::item:selected {
-                background: __ACCENT__;
-                color: white;
-            }
-            QFrame#card {
-                background: __PANEL__;
-                border: 1px solid __BORDER__;
-                border-radius: 6px;
-            }
-            QLabel#cardTitle {
-                color: __MUTED__;
-                font-size: 13px;
-            }
-            QLabel#cardValue {
-                font-size: 22px;
-                font-weight: 600;
-                color: __TEXT__;
-            }
-            QLabel#cardSub {
-                color: __MUTED__;
-                font-size: 12px;
-            }
-            QLabel#sectionTitle {
-                font-size: 15px;
-                font-weight: 600;
-                color: __TEXT__;
-            }
-            QLabel#fieldLabel {
-                color: __MUTED__;
-            }
-            QLabel#summaryValue {
-                color: __TEXT__;
-                font-weight: 600;
-                font-size: 14px;
-            }
-            QPushButton {
-                background: __BUTTON__;
-                border: 1px solid __BORDER__;
-                border-radius: 5px;
-                padding: 6px 14px;
-            }
-            QPushButton:hover { background: __BUTTON_HOVER__; }
-            QPushButton#primaryButton {
-                background: __ACCENT__;
-                color: white;
-                border-color: __ACCENT__;
-            }
-            QPushButton#primaryButton:hover { background: __ACCENT__; }
-            QTableWidget {
-                background: __PANEL__;
-                alternate-background-color: __TABLE_ALT__;
-                border: 1px solid __BORDER__;
-                border-radius: 8px;
-                gridline-color: __BORDER__;
-            }
-            QHeaderView::section {
-                background: __HEADER__;
-                border: none;
-                border-bottom: 1px solid __BORDER__;
-                padding: 6px;
-                font-weight: 600;
-            }
-            QTableCornerButton::section {
-                background: __HEADER__;
-                border: none;
-            }
-            QScrollBar:vertical {
-                background: transparent;
-                width: 10px;
-                margin: 2px;
-            }
-            QScrollBar::handle:vertical {
-                background: __SCROLL__;
-                border-radius: 5px;
-                min-height: 24px;
-            }
-            QScrollBar::handle:vertical:hover { background: __SCROLL_HOVER__; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0;
-            }
-            QLineEdit, QComboBox, QDoubleSpinBox, QDateEdit {
-                background: __INPUT__;
-                color: __TEXT__;
-                border: 1px solid __BORDER__;
-                border-radius: 4px;
-                padding: 4px 6px;
-            }
-            QComboBox {
-                background: __INPUT__;
-                color: __TEXT__;
-                border: 1px solid __BORDER__;
-                border-radius: 5px;
-                padding: 4px 26px 4px 8px;
-                min-height: 24px;
-            }
-            QComboBox:hover { border-color: __ACCENT__; }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 22px;
-                border-left: 1px solid __BORDER__;
-                border-top-right-radius: 5px;
-                border-bottom-right-radius: 5px;
-                background: __HEADER__;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid __MUTED__;
-                margin-right: 6px;
-            }
-            QComboBox QAbstractItemView {
-                background: __PANEL__;
-                color: __TEXT__;
-                border: 1px solid __BORDER__;
-                border-radius: 5px;
-                selection-background-color: __ACCENT__;
-                selection-color: white;
-                outline: 0;
-            }
-            QMenuBar {
-                background: __PANEL__;
-                border-bottom: 1px solid __BORDER__;
-                color: __TEXT__;
-            }
-            QMenuBar::item { padding: 6px 12px; }
-            QMenuBar::item:selected { background: __BUTTON_HOVER__; }
-            QMenu { background: __PANEL__; color: __TEXT__; border: 1px solid __BORDER__; }
-            QMenu::item:selected { background: __BUTTON_HOVER__; }
-            QToolTip {
-                background: __INPUT__;
-                color: __TEXT__;
-                border: 1px solid __BORDER__;
-                padding: 4px 6px;
-            }
-        """
-        replacements = {
-            "__ACCENT__": accent,
-            **{key: value for key, value in colors.items()},
-        }
-        for key, value in replacements.items():
-            style = style.replace(key, value)
-        self.setStyleSheet(style)
-
-
-def _theme_colors(dark: bool) -> dict[str, str]:
-    if dark:
-        return {
-            "__BG__": "#171c24",
-            "__PANEL__": "#1f2630",
-            "__BORDER__": "#303a48",
-            "__TEXT__": "#e5e7eb",
-            "__MUTED__": "#9aa3b2",
-            "__BUTTON__": "#2a3340",
-            "__BUTTON_HOVER__": "#34404f",
-            "__INPUT__": "#232a36",
-            "__HEADER__": "#232a36",
-            "__TABLE_ALT__": "#293240",
-            "__SCROLL__": "#3a4554",
-            "__SCROLL_HOVER__": "#4a5668",
-            "__NAV_BG__": "#10141a",
-            "__NAV_TEXT__": "#c7ccd4",
-        }
-    return {
-        "__BG__": "#f5f6f8",
-        "__PANEL__": "#ffffff",
-        "__BORDER__": "#e2e5ea",
-        "__TEXT__": "#1f2430",
-        "__MUTED__": "#6b7280",
-        "__BUTTON__": "#eef0f4",
-        "__BUTTON_HOVER__": "#e2e6ec",
-        "__INPUT__": "#ffffff",
-        "__HEADER__": "#f1f3f7",
-        "__TABLE_ALT__": "#f8fafc",
-        "__SCROLL__": "#c8ced8",
-        "__SCROLL_HOVER__": "#aab2bf",
-        "__NAV_BG__": "#232a36",
-        "__NAV_TEXT__": "#d5dae3",
-    }
+        apply_theme(self, self.db.conn)

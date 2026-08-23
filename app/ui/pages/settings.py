@@ -46,10 +46,11 @@ THEME_MODES = [
 
 
 class SettingsPage(QWidget):
-    def __init__(self, conn, on_settings_changed):
+    def __init__(self, conn, on_settings_changed, on_cloud_action=None):
         super().__init__()
         self.conn = conn
         self.on_settings_changed = on_settings_changed
+        self.on_cloud_action = on_cloud_action
         self._build()
         self._load()
 
@@ -188,6 +189,62 @@ class SettingsPage(QWidget):
         web_section.add_layout(web_grid)
         layout.addWidget(web_section)
 
+        cloud_section = Section("加密云同步（WebDAV，云端数据加密存储）")
+        cloud_grid = QGridLayout()
+        cloud_grid.setHorizontalSpacing(24)
+        cloud_grid.setVerticalSpacing(10)
+        self.cloud_enabled_check = QCheckBox("启用云同步")
+        cloud_grid.addWidget(self.cloud_enabled_check, 0, 0)
+
+        cloud_grid.addWidget(QLabel("WebDAV 地址"), 1, 0)
+        self.cloud_url_edit = line_edit(
+            placeholder="如 https://dav.jianguoyun.com/dav/"
+        )
+        cloud_grid.addWidget(self.cloud_url_edit, 1, 1)
+        cloud_grid.addWidget(QLabel("账号"), 1, 2)
+        self.cloud_username_edit = line_edit()
+        cloud_grid.addWidget(self.cloud_username_edit, 1, 3)
+
+        cloud_grid.addWidget(QLabel("密码"), 2, 0)
+        self.cloud_password_edit = QLineEdit()
+        self.cloud_password_edit.setEchoMode(QLineEdit.Password)
+        cloud_grid.addWidget(self.cloud_password_edit, 2, 1)
+        cloud_grid.addWidget(QLabel("同步密码（加密密钥）"), 2, 2)
+        self.cloud_key_edit = QLineEdit()
+        self.cloud_key_edit.setEchoMode(QLineEdit.Password)
+        cloud_grid.addWidget(self.cloud_key_edit, 2, 3)
+
+        self.cloud_startup_check = QCheckBox("启动软件时自动同步")
+        cloud_grid.addWidget(self.cloud_startup_check, 3, 0, 1, 2)
+
+        self.cloud_status_label = QLabel("云同步未配置")
+        self.cloud_status_label.setObjectName("summaryValue")
+        self.cloud_status_label.setWordWrap(True)
+        cloud_grid.addWidget(self.cloud_status_label, 4, 0, 1, 4)
+
+        cloud_buttons = QHBoxLayout()
+        self.cloud_push_button = make_button("立即同步", primary=True)
+        self.cloud_pull_button = make_button("从云端恢复")
+        self.cloud_test_button = make_button("测试连接")
+        self.cloud_push_button.clicked.connect(lambda: self._cloud_action("push"))
+        self.cloud_pull_button.clicked.connect(lambda: self._cloud_action("pull"))
+        self.cloud_test_button.clicked.connect(lambda: self._cloud_action("test"))
+        cloud_buttons.addWidget(self.cloud_push_button)
+        cloud_buttons.addWidget(self.cloud_pull_button)
+        cloud_buttons.addWidget(self.cloud_test_button)
+        cloud_buttons.addStretch(1)
+        cloud_section.add_layout(cloud_grid)
+        cloud_section.add_layout(cloud_buttons)
+
+        cloud_note = QLabel(
+            "同步密码用于加密上传到云端的数据库，请牢记；忘记后云端数据无法恢复。"
+            "WebDAV 账号密码与同步密码只保存在本地数据库。"
+        )
+        cloud_note.setObjectName("fieldLabel")
+        cloud_note.setWordWrap(True)
+        cloud_section.add(cloud_note)
+        layout.addWidget(cloud_section)
+
         cache_section = Section("缓存清理")
         cache_layout = QHBoxLayout()
         self.clear_cache_button = make_button("清除导出与备份缓存")
@@ -252,6 +309,31 @@ class SettingsPage(QWidget):
         self.web_access_code_edit.setText(
             repository.get_setting(self.conn, "web_access_code", "")
         )
+        self.cloud_enabled_check.setChecked(
+            repository.get_setting(self.conn, "cloud_sync_enabled", "0") == "1"
+        )
+        self.cloud_url_edit.setText(
+            repository.get_setting(self.conn, "cloud_sync_webdav_url", "")
+        )
+        self.cloud_username_edit.setText(
+            repository.get_setting(self.conn, "cloud_sync_username", "")
+        )
+        self.cloud_password_edit.setText(
+            repository.get_setting(self.conn, "cloud_sync_password", "")
+        )
+        self.cloud_key_edit.setText(
+            repository.get_setting(self.conn, "cloud_sync_key", "")
+        )
+        self.cloud_startup_check.setChecked(
+            repository.get_setting(self.conn, "cloud_sync_startup", "0") == "1"
+        )
+        last_status = repository.get_setting(
+            self.conn, "cloud_sync_last_status", ""
+        )
+        last_time = repository.get_setting(self.conn, "cloud_sync_last_time", "")
+        if last_status:
+            suffix = f"（{last_time}）" if last_time else ""
+            self.cloud_status_label.setText(last_status + suffix)
 
     def _pick_export_dir(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "选择导出目录")
@@ -296,6 +378,28 @@ class SettingsPage(QWidget):
         repository.set_setting(
             self.conn, "web_access_code", self.web_access_code_edit.text().strip()
         )
+        repository.set_setting(
+            self.conn,
+            "cloud_sync_enabled",
+            "1" if self.cloud_enabled_check.isChecked() else "0",
+        )
+        repository.set_setting(
+            self.conn, "cloud_sync_webdav_url", self.cloud_url_edit.text().strip()
+        )
+        repository.set_setting(
+            self.conn, "cloud_sync_username", self.cloud_username_edit.text().strip()
+        )
+        repository.set_setting(
+            self.conn, "cloud_sync_password", self.cloud_password_edit.text().strip()
+        )
+        repository.set_setting(
+            self.conn, "cloud_sync_key", self.cloud_key_edit.text().strip()
+        )
+        repository.set_setting(
+            self.conn,
+            "cloud_sync_startup",
+            "1" if self.cloud_startup_check.isChecked() else "0",
+        )
         self.conn.commit()
         flash_saved(self.save_button)
         self.on_settings_changed()
@@ -319,6 +423,32 @@ class SettingsPage(QWidget):
 
     def set_web_status(self, text: str) -> None:
         self.web_status_label.setText(text)
+
+    def set_cloud_status(self, text: str) -> None:
+        self.cloud_status_label.setText(text)
+
+    def _cloud_values(self) -> dict[str, str]:
+        return {
+            "base_url": self.cloud_url_edit.text().strip(),
+            "username": self.cloud_username_edit.text().strip(),
+            "password": self.cloud_password_edit.text().strip(),
+            "sync_password": self.cloud_key_edit.text().strip(),
+        }
+
+    def _cloud_action(self, mode: str) -> None:
+        values = self._cloud_values()
+        if not values["base_url"] or not values["username"] or not values["password"]:
+            QMessageBox.warning(
+                self, "提示", "请先填写 WebDAV 地址、账号和密码"
+            )
+            return
+        if mode in ("push", "pull") and len(values["sync_password"]) < 8:
+            QMessageBox.warning(
+                self, "提示", "同步密码至少 8 位，用于加密云端数据"
+            )
+            return
+        if self.on_cloud_action:
+            self.on_cloud_action(mode, values)
 
     def _clear_cache(self) -> None:
         export_dir = self.export_dir_edit.text().strip() or str(exports_dir())

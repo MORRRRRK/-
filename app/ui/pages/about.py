@@ -6,7 +6,13 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from ... import VERSION_LABEL
 from ..widgets import make_button
 
-CHANGELOG = """V3.0
+CHANGELOG = """V3.1
+· 新增加密云同步：数据库加密后上传到 WebDAV（坚果云/Nextcloud/NAS）
+· 支持手动同步、从云端恢复、启动时自动同步
+· 云端只保存加密文件，同步密码不进入发布包
+· 同步前自动备份本地数据库，冲突时保留云端旧文件副本
+
+V3.0
 · 新增智能报告：接入 OpenAI 兼容大模型，可生成年度/月度/持仓/自定义报告
 · 报告支持 Markdown 预览、复制、导出，生成记录保存在本地数据库
 · 新增局域网只读 Web 端：手机/浏览器通过访问码查看总览、流水、持仓和报告
