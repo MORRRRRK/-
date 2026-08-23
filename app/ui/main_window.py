@@ -120,15 +120,9 @@ class MainWindow(QMainWindow):
         self.refresh_all()
 
     def _startup_update_check(self) -> None:
-        if is_customer():
-            return
         self._run_update_check(quiet=True)
 
     def _check_update(self, about_page=None) -> None:
-        if is_customer():
-            if about_page is not None:
-                about_page.update_status.setText("客户版不提供在线更新，请使用安装包更新")
-            return
         self._run_update_check(quiet=False, about_page=about_page)
 
     def _run_update_check(self, quiet: bool = False, about_page=None) -> None:

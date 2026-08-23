@@ -34,11 +34,33 @@ def is_newer(remote: str, current: str) -> bool:
 
 
 def update_repo(conn) -> str:
-    return repository.get_setting(conn, "update_repo", "").strip()
+    repo = repository.get_setting(conn, "update_repo", "").strip()
+    if not repo:
+        repo = update_config().get("repo", "")
+    return repo
 
 
 def update_token(conn) -> str:
-    return repository.get_setting(conn, "github_token", "").strip()
+    token = repository.get_setting(conn, "github_token", "").strip()
+    if not token:
+        token = update_config().get("token", "")
+    return token
+
+
+def update_config() -> dict[str, str]:
+    """读取程序目录下的 update_config.ini（客户版免配置更新源）。"""
+    path = paths.app_root() / "update_config.ini"
+    if not path.exists():
+        return {}
+    config: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                config[key.strip().lower()] = value.strip()
+    except OSError:
+        return {}
+    return config
 
 
 def _github_get(url: str, token: str = "", accept: str = "") -> dict:

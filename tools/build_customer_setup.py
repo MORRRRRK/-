@@ -10,7 +10,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "dist" / "财务软件客户版"
 RELEASE_DIR = ROOT / "releases"
-ALLOWED_TOP = {"财务软件客户版.exe", "_internal", "edition.ini"}
+ALLOWED_TOP = {
+    "财务软件客户版.exe",
+    "updater_helper.exe",
+    "_internal",
+    "edition.ini",
+}
 CSC = Path(
     r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 )
