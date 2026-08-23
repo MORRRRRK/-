@@ -16,14 +16,15 @@ class UpdateCheckWorker(QThread):
     finished = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, repo: str, token: str = "", parent=None):
+    def __init__(self, repo: str, token: str = "", customer: bool = False, parent=None):
         super().__init__(parent)
         self.repo = repo
         self.token = token
+        self.customer = customer
 
     def run(self) -> None:
         try:
-            info = check_for_update(self.repo, self.token)
+            info = check_for_update(self.repo, self.token, self.customer)
         except UpdaterError as exc:
             self.failed.emit(str(exc))
             return

@@ -182,7 +182,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "无法检查更新", message)
             return
         self._current_about_page = about_page
-        self._check_worker = UpdateCheckWorker(repo, token)
+        self._check_worker = UpdateCheckWorker(repo, token, is_customer())
         self._check_worker.finished.connect(self._on_check_finished)
         self._check_worker.failed.connect(self._on_check_failed)
         self._check_worker.start()

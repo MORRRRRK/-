@@ -82,7 +82,7 @@ def _github_get(url: str, token: str = "", accept: str = "") -> dict:
         raise UpdaterError("GitHub 返回内容无法解析") from exc
 
 
-def check_for_update(repo: str, token: str = "") -> dict:
+def check_for_update(repo: str, token: str = "", customer: bool = False) -> dict:
     """返回最新版本信息；无新版本时返回 None。"""
     repo = repo.strip().strip("/")
     if not repo:
@@ -94,12 +94,14 @@ def check_for_update(repo: str, token: str = "") -> dict:
     zip_url = ""
     sha256 = ""
     notes = str(release.get("body") or "")
+    manifest_name = "customer_update.json" if customer else "update.json"
+    zip_prefix = "customer-app-" if customer else "finance-app-"
     for asset in release.get("assets") or []:
         name = str(asset.get("name") or "")
         asset_url = str(
             asset.get("url") if token else asset.get("browser_download_url") or ""
         )
-        if name == "update.json":
+        if name == manifest_name:
             try:
                 manifest = _github_get(
                     asset_url, token, accept="application/octet-stream"
@@ -111,7 +113,7 @@ def check_for_update(repo: str, token: str = "") -> dict:
                 notes = str(manifest.get("notes") or notes)
             except Exception:
                 pass
-        elif name.startswith("finance-app-") and name.endswith(".zip"):
+        elif name.startswith(zip_prefix) and name.endswith(".zip"):
             zip_url = asset_url
             if not update_url:
                 update_url = asset_url
@@ -185,7 +187,7 @@ def prepare_update(
 
     job = {
         "app_dir": str(paths.app_root()),
-        "launcher": "财务软件.exe",
+        "launcher": _launcher_name(),
         "zip_path": str(zip_path),
         "new_version": version,
         "current_version": __version__,
@@ -200,6 +202,14 @@ def prepare_update(
     helper_copy = temp_dir / "updater_helper.exe"
     shutil.copy2(helper_source, helper_copy)
     return job_path, helper_copy
+
+
+def _launcher_name() -> str:
+    app_dir = paths.app_root()
+    for name in ("财务软件客户版.exe", "财务软件.exe"):
+        if (app_dir / name).exists():
+            return name
+    return "财务软件.exe"
 
 
 def launch_updater(job_path: Path, helper_copy: Path) -> None:
