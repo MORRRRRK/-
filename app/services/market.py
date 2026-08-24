@@ -6,6 +6,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 
 from .eastmoney import EastMoneyError, fund_nav as eastmoney_fund_nav
 
@@ -114,13 +115,25 @@ def fetch_live_price(
                     raise MarketError(str(exc)) from exc
             raise
     if asset_type == "fund_otc":
+        pure_code = symbol.upper().replace(".OF", "")
+        api_symbol = pure_code + ".OF" if pure_code.isdigit() and len(pure_code) == 6 else symbol
         try:
-            item = client.fund_nav("otc", symbol)
+            item = client.fund_nav("otc", api_symbol)
             price = float(item.get("unit_nav") or 0)
-            return price, str(item.get("nav_date") or "")
+            return price, _format_nav_date(item.get("nav_date"))
         except MarketError:
             try:
-                return eastmoney_fund_nav(symbol)
+                return eastmoney_fund_nav(pure_code if pure_code.isdigit() else symbol)
             except EastMoneyError as exc:
                 raise MarketError(str(exc)) from exc
     raise MarketError(f"不支持的资产类型：{asset_type}")
+
+
+def _format_nav_date(value) -> str:
+    text = str(value or "").strip()
+    if text.isdigit():
+        try:
+            return datetime.fromtimestamp(int(text) / 1000.0).strftime("%Y-%m-%d")
+        except (OSError, ValueError):
+            return text
+    return text

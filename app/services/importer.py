@@ -240,6 +240,10 @@ def _parse_insurance_params(ws, header_row: int) -> dict[str, Any] | None:
         "monthly_salary": 0.0,
         "thirteenth_month_months": 1.0,
         "year_end_bonus_months": 1.0,
+        "thirteenth_coefficient": 1.0,
+        "thirteenth_frequency": "annual",
+        "year_end_bonus_coefficient": 1.0,
+        "year_end_bonus_frequency": "annual",
         "thirteenth_amount": 0.0,
         "year_end_bonus_amount": 0.0,
         "housing_subsidy": 0.0,
@@ -395,6 +399,19 @@ def import_xlsx(conn: sqlite3.Connection, xlsx_path: str | Path) -> dict[str, An
             if year_match:
                 year_id = repository.ensure_year(conn, int(year_match.group(1)))
                 repository.upsert_insurance_params(conn, year_id, params)
+                if float(params.get("housing_subsidy") or 0.0) > 0:
+                    repository.replace_salary_items(
+                        conn,
+                        year_id,
+                        [
+                            {
+                                "item_type": "subsidy",
+                                "name": "租房补贴",
+                                "amount": float(params["housing_subsidy"]),
+                                "frequency": "monthly",
+                            }
+                        ],
+                    )
                 seed_insurance_items(conn)
 
         ref = _read_reference_anchors(summary_ws)

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core import repository
+from ...edition import is_customer
 from ...services import calculations
 from ...services.eastmoney import EastMoneyError, search_fund
 from ...services.gold import GoldPriceError, fetch_gold_price
@@ -29,6 +30,7 @@ from ..widgets import (
     confirm_delete,
     flash_saved,
     make_button,
+    make_formula_button,
     money,
     pct,
 )
@@ -43,6 +45,24 @@ ASSET_TYPES = [
 CATEGORIES = ["基金", "黄金", "股票"]
 INVEST_TIMES = ["每日", "每周一", "每月1日", "暂停"]
 
+HOLDINGS_FORMULA_TEXT = (
+    "净值：股票=实时价格，场内基金/ETF=最新价，场外基金=单位净值，黄金 ETF=实时价格\n"
+    "持仓市值 = 份额 × 净值\n"
+    "持有收益 = 持仓市值 - 成本\n"
+    "累计收益 = 用户累计确认的收益快照（含已赎回收益）\n"
+    "收益率 = 累计收益 ÷ 持仓市值\n"
+    "总持仓 = Σ 各类持仓市值 + Σ 黄金账户市值\n"
+    "总累计收益 = Σ 各类累计收益 + Σ 黄金账户收益\n"
+    "总收益率 = 总累计收益 ÷ 总持仓\n"
+    "定投执行：份额 += 定投金额 ÷ 净值；成本 += 定投金额"
+)
+
+GOLD_FORMULA_TEXT = (
+    "黄金账户当前市值 = 克数 × 参考金价\n"
+    "黄金账户收益 = 当前市值 - 成本\n"
+    "实时金价来自新浪/公开金价接口，仅为参考"
+)
+
 
 class HoldingsPage(QScrollArea):
     def __init__(self, conn, on_change):
@@ -56,6 +76,7 @@ class HoldingsPage(QScrollArea):
         self._gold_ids: list[int | None] = []
         self._deleted_gold: list[dict] = []
         self._gold_reference_price: float | None = None
+        self._formula_enabled = not is_customer()
         self.setWidgetResizable(True)
         self._content = QWidget()
         self.setWidget(self._content)
@@ -82,6 +103,12 @@ class HoldingsPage(QScrollArea):
         self.summary_label = QLabel("")
         self.summary_label.setObjectName("summaryValue")
         top.addWidget(self.summary_label)
+        if self._formula_enabled:
+            top.addWidget(
+                make_formula_button(
+                    self, "持仓计算公式", HOLDINGS_FORMULA_TEXT
+                )
+            )
         layout.addLayout(top)
 
         action_row = QHBoxLayout()
@@ -90,7 +117,6 @@ class HoldingsPage(QScrollArea):
         self.undo_button = make_button("撤销删除")
         self.resolve_button = make_button("按名称解析代码")
         self.refresh_button = make_button("刷新实时行情")
-        self.invest_button = make_button("执行今日定投")
         self.save_button = make_button("保存修改", primary=True)
         self.save_button.setMinimumSize(150, 42)
         self.add_row_button.clicked.connect(self._add_row)
@@ -98,7 +124,6 @@ class HoldingsPage(QScrollArea):
         self.undo_button.clicked.connect(self._undo_delete)
         self.resolve_button.clicked.connect(self._resolve_symbol)
         self.refresh_button.clicked.connect(lambda: self._refresh_market(show_popup=True))
-        self.invest_button.clicked.connect(self._run_investments)
         self.save_button.clicked.connect(self._save_all)
         for button in (
             self.add_row_button,
@@ -106,7 +131,6 @@ class HoldingsPage(QScrollArea):
             self.undo_button,
             self.resolve_button,
             self.refresh_button,
-            self.invest_button,
         ):
             action_row.addWidget(button)
         action_row.addStretch(1)
@@ -114,12 +138,12 @@ class HoldingsPage(QScrollArea):
         layout.addLayout(action_row)
 
         table_section = Section("持仓列表（直接在表格中修改，保存后全部生效）")
-        self.table = QTableWidget(0, 14)
+        self.table = QTableWidget(0, 15)
         self.table.setHorizontalHeaderLabels(
             [
-                "类别", "渠道", "名称", "代码", "资产类型", "份额", "持仓",
-                "持有收益", "累计收益", "收益率", "成本", "定投金额", "定投时间",
-                "更新时间",
+                "类别", "渠道", "名称", "代码", "资产类型", "净值", "份额",
+                "持仓", "持有收益", "累计收益", "收益率", "成本", "定投金额",
+                "定投时间", "更新时间",
             ]
         )
         self.table.verticalHeader().setVisible(False)
@@ -129,7 +153,7 @@ class HoldingsPage(QScrollArea):
         table_section.add(self.table)
         layout.addWidget(table_section)
 
-        gold_section = Section("无代码黄金账户（积存金 / 易存金，按克参考实时金价）")
+        gold_section = Section("黄金账户（积存金 / 易存金，按克参考实时金价）")
         gold_top = QHBoxLayout()
         self.gold_refresh_button = make_button("刷新实时金价")
         self.gold_add_button = make_button("新增黄金账户")
@@ -152,6 +176,12 @@ class HoldingsPage(QScrollArea):
         gold_top.addWidget(self.gold_save_button)
         gold_top.addStretch(1)
         gold_top.addWidget(self.gold_price_label)
+        if self._formula_enabled:
+            gold_top.addWidget(
+                make_formula_button(
+                    self, "黄金账户计算公式", GOLD_FORMULA_TEXT
+                )
+            )
         gold_section.add_layout(gold_top)
 
         self.gold_table = QTableWidget(0, 8)
@@ -170,6 +200,7 @@ class HoldingsPage(QScrollArea):
         self.timer.timeout.connect(lambda: self._refresh_market(show_popup=False))
         self.timer.start(60_000)
         self.refresh()
+        QTimer.singleShot(1200, lambda: self._refresh_market(show_popup=False))
 
     def _append_row(self, holding: dict | None = None) -> None:
         row = self.table.rowCount()
@@ -208,17 +239,36 @@ class HoldingsPage(QScrollArea):
                 asset_combo.setCurrentText(holding["asset_type"])
         self.table.setCellWidget(row, 4, asset_combo)
 
+        net_value = (
+            float(holding["last_price"])
+            if holding and holding.get("last_price") is not None
+            else None
+        )
+        if (
+            net_value is None
+            and holding
+            and float(holding.get("shares") or 0) > 0
+        ):
+            net_value = float(holding.get("holding_value") or 0) / float(
+                holding["shares"]
+            )
+        net_value_item = QTableWidgetItem(
+            f"{net_value:.4f}" if net_value is not None else ""
+        )
+        net_value_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.table.setItem(row, 5, net_value_item)
+
         numeric_fields = {
-            5: holding["shares"] if holding else 0.0,
-            6: holding["holding_value"] if holding else 0.0,
-            7: holding["holding_profit"] if holding else 0.0,
-            8: holding["cumulative_profit"] if holding else 0.0,
-            10: holding["cost_basis"] if holding else 0.0,
-            11: holding["invest_plan"] if holding else 0.0,
+            6: holding["shares"] if holding else 0.0,
+            7: holding["holding_value"] if holding else 0.0,
+            8: holding["holding_profit"] if holding else 0.0,
+            9: holding["cumulative_profit"] if holding else 0.0,
+            11: holding["cost_basis"] if holding else 0.0,
+            12: holding["invest_plan"] if holding else 0.0,
         }
         for col, value in numeric_fields.items():
             numeric_item = QTableWidgetItem(
-                _format_decimal(value, 4 if col == 5 else 2)
+                _format_decimal(value, 4 if col == 6 else 2)
             )
             numeric_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.table.setItem(row, col, numeric_item)
@@ -227,18 +277,18 @@ class HoldingsPage(QScrollArea):
         rate_item = QTableWidgetItem(pct(rate) if holding else "")
         rate_item.setFlags(rate_item.flags() & ~Qt.ItemIsEditable)
         rate_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.table.setItem(row, 9, rate_item)
+        self.table.setItem(row, 10, rate_item)
 
         time_combo = QComboBox()
         time_combo.setEditable(True)
         time_combo.addItems(INVEST_TIMES)
         time_combo.setCurrentText(holding["invest_time"] if holding else "")
-        self.table.setCellWidget(row, 12, time_combo)
+        self.table.setCellWidget(row, 13, time_combo)
 
         time_item = QTableWidgetItem(holding["price_time"] if holding else "")
         time_item.setFlags(time_item.flags() & ~Qt.ItemIsEditable)
         time_item.setTextAlignment(Qt.AlignCenter)
-        self.table.setItem(row, 13, time_item)
+        self.table.setItem(row, 14, time_item)
 
     def _reload_table(self) -> None:
         holdings = repository.list_holdings(self.conn)
@@ -304,13 +354,15 @@ class HoldingsPage(QScrollArea):
             asset_type = self.table.cellWidget(row, 4).currentData() or self.table.cellWidget(
                 row, 4
             ).currentText().strip()
-            shares = _parse_decimal(self.table.item(row, 5).text())
-            holding_value = _parse_decimal(self.table.item(row, 6).text())
-            holding_profit = _parse_decimal(self.table.item(row, 7).text())
-            cumulative_profit = _parse_decimal(self.table.item(row, 8).text())
-            cost_basis = _parse_decimal(self.table.item(row, 10).text())
-            invest_plan = _parse_decimal(self.table.item(row, 11).text())
-            invest_time = self.table.cellWidget(row, 12).currentText().strip()
+            net_value_text = self.table.item(row, 5).text().strip()
+            net_value = float(net_value_text) if net_value_text else None
+            shares = _parse_decimal(self.table.item(row, 6).text())
+            holding_value = _parse_decimal(self.table.item(row, 7).text())
+            holding_profit = _parse_decimal(self.table.item(row, 8).text())
+            cumulative_profit = _parse_decimal(self.table.item(row, 9).text())
+            cost_basis = _parse_decimal(self.table.item(row, 11).text())
+            invest_plan = _parse_decimal(self.table.item(row, 12).text())
+            invest_time = self.table.cellWidget(row, 13).currentText().strip()
 
             update = {
                 **base,
@@ -319,6 +371,7 @@ class HoldingsPage(QScrollArea):
                 "name": name,
                 "symbol": symbol,
                 "asset_type": asset_type,
+                "last_price": net_value,
                 "shares": shares,
                 "holding_value": holding_value,
                 "holding_profit": holding_profit,
@@ -543,23 +596,22 @@ class HoldingsPage(QScrollArea):
         finally:
             QApplication.restoreOverrideCursor()
         if not candidates:
-            if asset_type == "fund_otc":
-                try:
-                    fallback = search_fund(name)
-                except EastMoneyError as exc:
-                    QMessageBox.warning(self, "解析失败", str(exc))
-                    return
-                if fallback:
-                    code = fallback[0]["code"]
-                    self.table.item(row, 3).setText(code)
-                    index = self.table.cellWidget(row, 4).findData("fund_otc")
-                    self.table.cellWidget(row, 4).setCurrentIndex(index)
-                    QMessageBox.information(
-                        self,
-                        "解析成功",
-                        f"{fallback[0]['name']}：{code}（东财兜底）",
-                    )
-                    return
+            try:
+                fallback = search_fund(name)
+            except EastMoneyError as exc:
+                QMessageBox.warning(self, "解析失败", str(exc))
+                return
+            if fallback:
+                code = fallback[0]["code"]
+                self.table.item(row, 3).setText(code)
+                index = self.table.cellWidget(row, 4).findData("fund_otc")
+                self.table.cellWidget(row, 4).setCurrentIndex(index)
+                QMessageBox.information(
+                    self,
+                    "解析成功",
+                    f"{fallback[0]['name']}：{code}（东财兜底）",
+                )
+                return
             QMessageBox.information(self, "未找到", "没有匹配的代码，请手动填写")
             return
         if len(candidates) == 1:
@@ -582,6 +634,41 @@ class HoldingsPage(QScrollArea):
         )
         QMessageBox.information(self, "请手动选择", "匹配到多个代码：\n" + lines)
 
+    def _fetch_or_resolve(
+        self, client: MarketClient, holding: dict
+    ) -> tuple[float, str, dict]:
+        """拉取行情；失败时尝试修正 6 位基金代码与资产类型后重试。"""
+        symbol = (holding.get("symbol") or "").strip()
+        asset_type = holding.get("asset_type") or ""
+        if not asset_type:
+            asset_type = {
+                "股票": "stock",
+                "黄金": "gold_etf",
+                "基金": "fund_exchange",
+            }.get(holding.get("category"), "")
+        try:
+            price, price_time = fetch_live_price(client, asset_type, symbol)
+            return price, price_time, holding
+        except MarketError:
+            name = str(holding.get("name") or "").strip()
+            if not symbol or not name:
+                raise
+            if asset_type in ("stock", "") and symbol.isdigit() and len(symbol) == 6:
+                try:
+                    candidates = search_fund(name)
+                except EastMoneyError:
+                    candidates = []
+                if candidates:
+                    code = candidates[0]["code"]
+                    update = dict(holding)
+                    update["symbol"] = code
+                    update["asset_type"] = "fund_otc"
+                    repository.update_holding(self.conn, holding["id"], update)
+                    resolved = {**holding, "symbol": code, "asset_type": "fund_otc"}
+                    price, price_time = fetch_live_price(client, "fund_otc", code)
+                    return price, price_time, resolved
+            raise
+
     def _refresh_market(self, show_popup: bool = True) -> None:
         client = self._market_client(silent=not show_popup)
         if client is None:
@@ -594,6 +681,7 @@ class HoldingsPage(QScrollArea):
             for holding in holdings:
                 symbol = (holding.get("symbol") or "").strip()
                 if not symbol:
+                    failed.append(f"{holding['name']}：未填写代码")
                     continue
                 asset_type = holding.get("asset_type") or ""
                 if not asset_type:
@@ -606,7 +694,9 @@ class HoldingsPage(QScrollArea):
                     failed.append(f"{holding['name']}：未设置资产类型")
                     continue
                 try:
-                    price, price_time = fetch_live_price(client, asset_type, symbol)
+                    price, _, resolved_holding = self._fetch_or_resolve(
+                        client, holding
+                    )
                 except MarketError as exc:
                     failed.append(f"{holding['name']}：{exc}")
                     continue
@@ -614,9 +704,9 @@ class HoldingsPage(QScrollArea):
                     failed.append(f"{holding['name']}：接口未返回价格")
                     continue
                 now = datetime.now().strftime("%Y-%m-%d %H:%M")
-                update = dict(holding)
+                update = dict(resolved_holding)
                 update["last_price"] = price
-                update["price_time"] = price_time or now
+                update["price_time"] = now
                 shares = float(holding.get("shares") or 0)
                 if shares > 0:
                     new_value = round(shares * price, 2)
@@ -649,25 +739,6 @@ class HoldingsPage(QScrollArea):
             if failed:
                 message += "\n\n失败：\n" + "\n".join(failed[:10])
             QMessageBox.information(self, "实时行情", message)
-
-    def _run_investments(self) -> None:
-        client = self._market_client()
-        if client is None:
-            return
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            executed = run_scheduled_investments(self.conn, client)
-        except Exception as exc:
-            QMessageBox.warning(self, "定投失败", str(exc))
-            return
-        finally:
-            QApplication.restoreOverrideCursor()
-        self.refresh()
-        self.on_change()
-        QMessageBox.information(
-            self, "定投结果", "今日定投：" + ("、".join(executed) if executed else "无")
-        )
-
 
 def _format_decimal(value, decimals: int = 2) -> str:
     if value is None or value == "":

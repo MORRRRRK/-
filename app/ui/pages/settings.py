@@ -64,7 +64,9 @@ class SettingsPage(QScrollArea):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(14)
 
-        section = Section("常用设置")
+        self.common_save_button = make_button("保存常用设置", primary=True)
+        self.common_save_button.clicked.connect(self._save_common)
+        section = Section("常用设置", actions=[self.common_save_button])
         grid = QGridLayout()
         grid.setHorizontalSpacing(24)
         grid.setVerticalSpacing(10)
@@ -135,7 +137,12 @@ class SettingsPage(QScrollArea):
         section.add_layout(grid)
         layout.addWidget(section)
 
-        llm_section = Section("大模型报告设置（OpenAI 兼容接口）")
+        self.llm_save_button = make_button("保存大模型设置", primary=True)
+        self.llm_save_button.clicked.connect(self._save_llm)
+        llm_section = Section(
+            "大模型报告设置（OpenAI 兼容接口）",
+            actions=[self.llm_save_button],
+        )
         llm_grid = QGridLayout()
         llm_grid.setHorizontalSpacing(24)
         llm_grid.setVerticalSpacing(10)
@@ -165,7 +172,9 @@ class SettingsPage(QScrollArea):
         llm_section.add_layout(llm_grid)
         layout.addWidget(llm_section)
 
-        web_section = Section("局域网只读访问")
+        self.web_save_button = make_button("保存局域网设置", primary=True)
+        self.web_save_button.clicked.connect(self._save_web)
+        web_section = Section("局域网只读访问", actions=[self.web_save_button])
         web_grid = QGridLayout()
         web_grid.setHorizontalSpacing(24)
         web_grid.setVerticalSpacing(10)
@@ -197,7 +206,12 @@ class SettingsPage(QScrollArea):
         web_section.add_layout(web_grid)
         layout.addWidget(web_section)
 
-        cloud_section = Section("加密云同步（WebDAV，云端数据加密存储）")
+        self.cloud_save_button = make_button("保存云同步设置", primary=True)
+        self.cloud_save_button.clicked.connect(self._save_cloud)
+        cloud_section = Section(
+            "加密云同步（WebDAV，云端数据加密存储）",
+            actions=[self.cloud_save_button],
+        )
         cloud_grid = QGridLayout()
         cloud_grid.setHorizontalSpacing(24)
         cloud_grid.setVerticalSpacing(10)
@@ -262,12 +276,6 @@ class SettingsPage(QScrollArea):
         cache_section.add_layout(cache_layout)
         layout.addWidget(cache_section)
 
-        buttons = QHBoxLayout()
-        self.save_button = make_button("保存设置", primary=True)
-        self.save_button.clicked.connect(self._save)
-        buttons.addWidget(self.save_button)
-        buttons.addStretch(1)
-        layout.addLayout(buttons)
         layout.addStretch(1)
 
     def _load(self) -> None:
@@ -353,7 +361,7 @@ class SettingsPage(QScrollArea):
         if directory:
             self.backup_dir_edit.setText(directory)
 
-    def _save(self) -> None:
+    def _save_common(self) -> None:
         repository.set_setting(self.conn, "font_size", str(int(self.font_size_spin.value())))
         repository.set_setting(self.conn, "theme_color", str(self.theme_combo.currentData()))
         repository.set_setting(
@@ -366,6 +374,11 @@ class SettingsPage(QScrollArea):
         repository.set_setting(
             self.conn, "github_token", self.github_token_edit.text().strip()
         )
+        self.conn.commit()
+        flash_saved(self.common_save_button)
+        self.on_settings_changed()
+
+    def _save_llm(self) -> None:
         repository.set_setting(
             self.conn, "llm_base_url", self.llm_base_url_edit.text().strip()
         )
@@ -375,6 +388,10 @@ class SettingsPage(QScrollArea):
         repository.set_setting(
             self.conn, "llm_model", self.llm_model_edit.text().strip()
         )
+        self.conn.commit()
+        flash_saved(self.llm_save_button)
+
+    def _save_web(self) -> None:
         repository.set_setting(
             self.conn,
             "web_enabled",
@@ -386,6 +403,11 @@ class SettingsPage(QScrollArea):
         repository.set_setting(
             self.conn, "web_access_code", self.web_access_code_edit.text().strip()
         )
+        self.conn.commit()
+        flash_saved(self.web_save_button)
+        self.on_settings_changed()
+
+    def _save_cloud(self) -> None:
         repository.set_setting(
             self.conn,
             "cloud_sync_enabled",
@@ -409,8 +431,7 @@ class SettingsPage(QScrollArea):
             "1" if self.cloud_startup_check.isChecked() else "0",
         )
         self.conn.commit()
-        flash_saved(self.save_button)
-        self.on_settings_changed()
+        flash_saved(self.cloud_save_button)
 
     def _test_llm(self) -> None:
         base_url = self.llm_base_url_edit.text().strip()

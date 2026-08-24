@@ -35,6 +35,14 @@ def export_csv(conn: sqlite3.Connection, exports_dir: Path) -> list[Path]:
             dict(r)
             for r in conn.execute("SELECT * FROM social_insurance_params ORDER BY year_id")
         ],
+        "tax_params": [
+            dict(r)
+            for r in conn.execute("SELECT * FROM tax_params ORDER BY year_id")
+        ],
+        "salary_items": [
+            dict(r)
+            for r in conn.execute("SELECT * FROM salary_items ORDER BY year_id, id")
+        ],
         "holdings": repository.list_holdings(conn),
         "gold_accounts": repository.list_gold_accounts(conn),
         "goals": repository.list_goals(conn),

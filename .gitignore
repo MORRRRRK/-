@@ -6,6 +6,8 @@ exports/
 backups/
 dist/
 build/
+build_v32/
+dist_v32/
 releases/
 edition.ini
 *.spec

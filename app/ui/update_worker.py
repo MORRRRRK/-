@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
+from ..core import paths
 from ..services.updater import (
     UpdaterError,
     check_for_update,
@@ -59,4 +61,15 @@ class UpdateInstallWorker(QThread):
         except UpdaterError as exc:
             self.failed.emit(str(exc))
             return
+        except Exception as exc:
+            self._write_error_log()
+            self.failed.emit(f"更新准备失败：{exc}\n详情已写入 update_error.log")
+            return
         self.finished.emit(str(self.info.get("version", "")))
+
+    def _write_error_log(self) -> None:
+        try:
+            target = paths.app_root() / "update_error.log"
+            target.write_text(traceback.format_exc(), encoding="utf-8")
+        except OSError:
+            pass

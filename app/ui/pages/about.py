@@ -3,16 +3,62 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QMessageBox,
     QProgressBar,
     QVBoxLayout,
     QWidget,
 )
 
-from ... import VERSION_LABEL
+from ... import VERSION_LABEL, __version__
+from ...core import repository
+from ...edition import is_customer
+from ...services.release import DEFAULT_REPO
+from ..release_worker import ReleasePushWorker
 from ..widgets import make_button
 
-CHANGELOG = """V3.1.3
+CHANGELOG = """V3.5.1
+· 持仓管理新增“净值”栏：股票/ETF/基金/黄金实时价格与净值直接展示，无价格时按持仓市值÷份额回填
+· 开发版补全“查看公式”：持仓总持仓/累计收益/收益率、资产总览、年度汇总、资产规划均增加公式说明
+
+V3.5
+· 所有可保存模块增加独立保存按钮：工资详情、N险N金、专项附加扣除、设置各模块分开保存
+· 开支管理：月度流水取消年终奖、各类补贴、报销、水电列，水电改为每月支出，删除下方月支出模块
+· 工资管理：自动计算结果与全年个税汇总合并，删除全年个人五险一金行
+· 持仓管理：删除“执行今日定投”按钮，启动与定时刷新时按定投策略自动执行；更新时间精确到分钟
+· 持仓管理：无代码黄金账户更名为黄金账户；缺失代码会明确报错
+· 资产规划：退休金测算移动到工资管理
+· 全局删除仅需一次确认，不再提示撤销
+· 开发版“关于”页新增“推送客户版更新”按钮，可一键打包并发布到 GitHub
+
+V3.4
+· “月度流水”改名“开支管理”，新增“月支出”模块按月汇总日常消费，年度汇总同步变更
+· 工资详情改为“13薪 xN”“年终奖 xN”，新增/删除/撤销按钮移到各自模块标题旁
+· 专项附加扣除地区选择合并为一行，其余扣除项目按两行四列紧凑排列
+· 取消独立的“税后工资计算”，功能合并进“全年个税汇总”
+· 修复场外基金实时行情：自动补 .OF 代码；股票类型误标 6 位基金代码时按名称自动修正
+
+V3.3.1
+· 修复在线更新卡在 100%：更新前备份数据库不再被未提交事务阻塞，改用独立数据库连接
+· 更新下载完成后明确显示“正在校验更新包并备份数据”
+· 更新准备阶段发生其他异常时不再静默卡住，会提示错误并写入 update_error.log
+
+V3.3
+· 工资参数与税务管理合并为“工资管理”
+· 工资详情重做：基本工资、13薪xN、年终奖xN、自定义绩效/补贴，支持按月/季/年发放
+· N险N金：表格放大并完整展示，保留自定义新增、删除、撤销
+· 专项附加扣除：租房按省-市-区逐级选择，自动带出扣除档位
+· 开发版计算结果旁新增“查看公式”，客户版不显示
+· 全年个税汇总与逐月累计预扣预缴表合并展示，年终奖计税方式保留
+
+V3.2
+· 工资参数新增专项附加扣除：租房城市、赡养老人、子女教育、婴幼儿照护、继续教育、房贷、大病医疗
+· 工资参数新增税后工资模拟：全年个税、年终奖单独/并入计税、12 个月税后收入
+· 新增“税务管理”页：按实际月度流水累计预扣预缴，逐月展示累计应税所得与当月个税
+· 月度流水新增“月消费”，联动年度汇总与资产总览消费统计
+
+V3.1.3
 · 修复坚果云中文目录同步 404：目录自动创建且正确处理编码
 · 更新下载新增全局进度窗口，不再只在“关于”页显示
 · 防火墙按钮改为隐藏终端窗口并等待管理员确认
@@ -107,6 +153,7 @@ class AboutPage(QWidget):
         super().__init__()
         self.conn = conn
         self.on_check_update = on_check_update
+        self._release_worker: ReleasePushWorker | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
@@ -137,7 +184,11 @@ class AboutPage(QWidget):
         self.check_update_button.clicked.connect(self._check)
         self.update_status = QLabel("")
         self.update_status.setObjectName("fieldLabel")
+        self.push_update_button = make_button("推送客户版更新")
+        self.push_update_button.clicked.connect(self._push_customer_update)
+        self.push_update_button.setVisible(not is_customer())
         update_row.addWidget(self.check_update_button)
+        update_row.addWidget(self.push_update_button)
         update_row.addWidget(self.update_status, 1)
         layout.addLayout(update_row)
 
@@ -151,6 +202,70 @@ class AboutPage(QWidget):
         self.update_status.setText("正在检查更新…")
         self.on_check_update(self)
 
+    def _push_customer_update(self) -> None:
+        if self._release_worker is not None and self._release_worker.isRunning():
+            return
+        if (
+            QMessageBox.question(
+                self,
+                "确认推送",
+                "将自动构建客户版、打包并发布到 GitHub，"
+                "整个过程需要几分钟。是否继续？",
+            )
+            != QMessageBox.Yes
+        ):
+            return
+        version, ok = QInputDialog.getText(
+            self, "推送客户版更新", "版本号（如 3.6.0）：", text=__version__
+        )
+        if not ok or not version.strip():
+            return
+        version = version.strip().lstrip("v")
+        notes, ok = QInputDialog.getMultiLineText(
+            self,
+            "推送客户版更新",
+            "本次更新说明：",
+            f"V{version}：",
+        )
+        if not ok:
+            return
+        repo = repository.get_setting(self.conn, "update_repo", "").strip()
+        token = repository.get_setting(self.conn, "github_token", "").strip()
+        if not repo:
+            repo = DEFAULT_REPO
+        if not token:
+            QMessageBox.warning(
+                self,
+                "无法推送",
+                "未填写 GitHub Token，请先在“设置”的常用设置中填写。",
+            )
+            return
+        self._release_worker = ReleasePushWorker(
+            version,
+            repo,
+            token,
+            notes.strip(),
+            parent=self,
+        )
+        self._release_worker.finished.connect(self._on_release_finished)
+        self._release_worker.failed.connect(self._on_release_failed)
+        self.update_status.setText("正在构建客户版并推送更新…")
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setVisible(True)
+        self._release_worker.start()
+
+    def _on_release_finished(self, url: str) -> None:
+        self._release_worker = None
+        self.clear_progress()
+        self.update_status.setText("已推送，客户版可检查更新")
+        QMessageBox.information(self, "推送完成", f"客户版更新已发布：\n{url}")
+
+    def _on_release_failed(self, message: str) -> None:
+        self._release_worker = None
+        self.clear_progress()
+        self.update_status.setText("推送失败")
+        QMessageBox.warning(self, "推送失败", message)
+
     def refresh(self) -> None:
         pass
 
@@ -158,6 +273,7 @@ class AboutPage(QWidget):
         if total <= 0:
             self.progress_bar.setRange(0, 0)
             self.progress_bar.setVisible(True)
+            self.update_status.setText("正在校验更新包并备份数据…")
             return
         percent = max(0, min(100, int(current * 100 / total)))
         self.progress_bar.setRange(0, 100)

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import shutil
 import subprocess
 import zipfile
@@ -54,8 +56,23 @@ def make_zip(version: str) -> Path:
     return target
 
 
-def build(version: str, desktop: Path) -> Path:
+def build(version: str, desktop: Path, repo: str = "MORRRRRK/finance-releases") -> Path:
     zip_path = make_zip(version)
+    digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    update = {
+        "version": version,
+        "url": (
+            f"https://github.com/{repo}/releases/download/"
+            f"v{version}/customer-app-{version}.zip"
+        ),
+        "sha256": digest,
+        "min_app_version": "2.0.0",
+        "notes": f"V{version} 更新",
+    }
+    (RELEASE_DIR / "customer_update.json").write_text(
+        json.dumps(update, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     source_cs = ROOT / "tools" / "setup_customer.cs"
     temp_cs = RELEASE_DIR / "setup_customer.cs"
     temp_cs.write_bytes(source_cs.read_bytes())
@@ -79,6 +96,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", default="2.4.0")
     parser.add_argument(
+        "--repo",
+        default="MORRRRRK/finance-releases",
+        help="GitHub owner/repo",
+    )
+    parser.add_argument(
         "--desktop",
         default="D:/Desktop",
         help="安装程序输出目录",
@@ -86,7 +108,7 @@ def main() -> None:
     args = parser.parse_args()
     desktop = Path(args.desktop)
     desktop.mkdir(parents=True, exist_ok=True)
-    output = build(args.version, desktop)
+    output = build(args.version, desktop, args.repo)
     print("客户版安装程序：", output)
 
 

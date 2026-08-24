@@ -68,6 +68,15 @@ def make_button(text: str, primary: bool = False) -> QPushButton:
     return btn
 
 
+def make_formula_button(parent, title: str, text: str) -> QPushButton:
+    """开发版“查看公式”按钮，点击弹出该计算结果的计算方式。"""
+    button = make_button("查看公式")
+    button.clicked.connect(
+        lambda _=False: QMessageBox.information(parent, title, text)
+    )
+    return button
+
+
 def flash_saved(button: QPushButton) -> None:
     """保存成功后让按钮短暂变绿，提示用户保存成功。"""
     original = button.styleSheet()
@@ -91,19 +100,8 @@ class WheelGuard(QObject):
 
 
 def confirm_delete(parent, title: str, text: str) -> bool:
-    """删除前二次确认，防止误删。"""
-    if QMessageBox.question(parent, title, text) != QMessageBox.Yes:
-        return False
-    if (
-        QMessageBox.question(
-            parent,
-            "再次确认",
-            text + "\n\n部分模块删除后可通过“撤销删除”恢复，是否继续？",
-        )
-        != QMessageBox.Yes
-    ):
-        return False
-    return True
+    """删除前一次确认，防止误删。"""
+    return QMessageBox.question(parent, title, text) == QMessageBox.Yes
 
 
 class StatCard(QFrame):
@@ -134,7 +132,7 @@ class StatCard(QFrame):
 class Section(QFrame):
     """白底分组面板。"""
 
-    def __init__(self, title: str, parent=None):
+    def __init__(self, title: str, parent=None, actions: list | None = None):
         super().__init__(parent)
         self.setObjectName("card")
         layout = QVBoxLayout(self)
@@ -142,7 +140,12 @@ class Section(QFrame):
         layout.setSpacing(10)
         title_label = QLabel(title)
         title_label.setObjectName("sectionTitle")
-        layout.addWidget(title_label)
+        title_row = QHBoxLayout()
+        title_row.addWidget(title_label)
+        title_row.addStretch(1)
+        for action in actions or []:
+            title_row.addWidget(action)
+        layout.addLayout(title_row)
         self.body = QVBoxLayout()
         layout.addLayout(self.body)
 

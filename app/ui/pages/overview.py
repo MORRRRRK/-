@@ -14,9 +14,22 @@ from PySide6.QtWidgets import (
 )
 
 from ...core import repository
+from ...edition import is_customer
 from ...services import calculations
 from ..charts import bar_chart, pie_chart, update_bar_chart, update_pie_chart
-from ..widgets import Section, StatCard, money, pct
+from ..widgets import Section, StatCard, make_formula_button, money, pct
+
+OVERVIEW_FORMULA_TEXT = (
+    "净资产 = 累计存款 + 投资总持仓\n"
+    "累计存款 = Σ 每月强制存款\n"
+    "投资持仓 = Σ 各类持仓市值 + Σ 黄金账户市值\n"
+    "累计收益 = Σ 各类累计收益 + Σ 黄金账户收益\n"
+    "总收益率 = 累计收益 ÷ 投资持仓\n"
+    "年度工资 = Σ 每月月工资\n"
+    "年度收入 = Σ(月工资 + 年终奖 + 补贴 + 报销)\n"
+    "住宿成本 = Σ 房租；理论结余 = 年度收入 + 住宿成本\n"
+    "消费 = Σ 每月支出；储蓄率 = 存款 ÷ 收入"
+)
 
 
 class OverviewPage(QScrollArea):
@@ -67,7 +80,14 @@ class OverviewPage(QScrollArea):
         charts_col.addWidget(self.pie_holder)
         layout.addLayout(charts_col)
 
-        annual_section = Section("汇总明细")
+        annual_actions = []
+        if not is_customer():
+            annual_actions.append(
+                make_formula_button(
+                    self, "资产总览计算公式", OVERVIEW_FORMULA_TEXT
+                )
+            )
+        annual_section = Section("汇总明细", actions=annual_actions)
         controls = QHBoxLayout()
         controls.addWidget(QLabel("显示方式"))
         self.mode_combo = QComboBox()
@@ -82,9 +102,9 @@ class OverviewPage(QScrollArea):
         controls.addStretch(1)
         annual_section.add_layout(controls)
 
-        self.summary_table = QTableWidget(0, 6)
+        self.summary_table = QTableWidget(0, 7)
         self.summary_table.setHorizontalHeaderLabels(
-            ["月份/年份", "工资", "收入", "住宿成本", "理论结余", "存款"]
+            ["月份/年份", "工资", "收入", "住宿成本", "理论结余", "存款", "消费"]
         )
         self.summary_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.summary_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -126,6 +146,7 @@ class OverviewPage(QScrollArea):
         income_values = []
         balance_values = []
         deposit_values = []
+        expense_values = []
         rows: list[list[str]] = []
         mode = self.mode_combo.currentData()
         if mode == "month":
@@ -148,6 +169,7 @@ class OverviewPage(QScrollArea):
                         rec.get("utilities", 0.0) or 0.0
                     )
                     deposits = float(rec.get("forced_deposit", 0.0) or 0.0)
+                    expense = float(rec.get("monthly_expense", 0.0) or 0.0)
                     rows.append(
                         [
                             f"{month} 月",
@@ -156,12 +178,14 @@ class OverviewPage(QScrollArea):
                             money(housing),
                             money(income + housing),
                             money(deposits),
+                            money(expense),
                         ]
                     )
                     categories.append(f"{month}月")
                     income_values.append(income)
                     balance_values.append(income + housing)
                     deposit_values.append(deposits)
+                    expense_values.append(expense)
         else:
             for year in years:
                 summary = calculations.year_summary(self.conn, year["id"])
@@ -173,12 +197,14 @@ class OverviewPage(QScrollArea):
                         money(summary["housing_cost"]),
                         money(summary["balance"]),
                         money(summary["deposits"]),
+                        money(summary["monthly_expense"]),
                     ]
                 )
                 categories.append(str(year["year"]))
                 income_values.append(summary["income"])
                 balance_values.append(summary["balance"])
                 deposit_values.append(summary["deposits"])
+                expense_values.append(summary["monthly_expense"])
 
         self.summary_table.setRowCount(len(rows))
         self.summary_table.setMinimumHeight(max(len(rows), 4) * 32 + 34)
@@ -200,6 +226,7 @@ class OverviewPage(QScrollArea):
             tuple(round(value, 2) for value in income_values),
             tuple(round(value, 2) for value in balance_values),
             tuple(round(value, 2) for value in deposit_values),
+            tuple(round(value, 2) for value in expense_values),
             tuple(allocation.keys()),
             tuple(round(value, 2) for value in allocation.values()),
         )
@@ -207,8 +234,13 @@ class OverviewPage(QScrollArea):
             update_bar_chart(
                 self._trend_view,
                 categories,
-                {"收入": income_values, "结余": balance_values, "存款": deposit_values},
-                "收入 / 结余 / 存款",
+                {
+                    "收入": income_values,
+                    "结余": balance_values,
+                    "存款": deposit_values,
+                    "消费": expense_values,
+                },
+                "收入 / 结余 / 存款 / 消费",
             )
             update_pie_chart(
                 self._pie_view,

@@ -192,13 +192,17 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _backup_database(conn, backup_dir: Path) -> Path:
+def _backup_database(backup_dir: Path, db_path: Path | None = None) -> Path:
     backup_dir = Path(backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     target = backup_dir / f"pre_update_{stamp}.db"
-    with sqlite3.connect(str(target)) as dest:
-        conn.backup(dest)
+    source = sqlite3.connect(str(db_path or paths.db_path()))
+    try:
+        with sqlite3.connect(str(target)) as dest:
+            source.backup(dest)
+    finally:
+        source.close()
     return target
 
 
@@ -217,6 +221,8 @@ def prepare_update(
     if zip_path.exists():
         zip_path.unlink()
     _download(update_info["url"], zip_path, token, progress_callback)
+    if progress_callback:
+        progress_callback(0, 0)
     expected = update_info.get("sha256") or ""
     if expected:
         actual = _sha256(zip_path)
@@ -224,7 +230,7 @@ def prepare_update(
             raise UpdaterError("更新包校验失败（SHA-256 不匹配）")
 
     backup_target = backup_dir or paths.backups_dir()
-    _backup_database(conn, backup_target)
+    _backup_database(backup_target, paths.db_path())
 
     job = {
         "app_dir": str(paths.app_root()),

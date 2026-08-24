@@ -30,14 +30,31 @@ def upsert_monthly_records(
     conn: sqlite3.Connection, year_id: int, records: Iterable[dict[str, Any]]
 ) -> None:
     for rec in records:
+        values = {
+            "year_id": year_id,
+            "month": int(rec.get("month", 0)),
+            "salary": float(rec.get("salary", 0.0) or 0.0),
+            "year_end_bonus": float(rec.get("year_end_bonus", 0.0) or 0.0),
+            "subsidies": float(rec.get("subsidies", 0.0) or 0.0),
+            "reimbursements": float(rec.get("reimbursements", 0.0) or 0.0),
+            "income_note": str(rec.get("income_note", "")),
+            "rent": float(rec.get("rent", 0.0) or 0.0),
+            "utilities": float(rec.get("utilities", 0.0) or 0.0),
+            "housing_note": str(rec.get("housing_note", "")),
+            "monthly_expense": float(rec.get("monthly_expense", 0.0) or 0.0),
+            "forced_deposit": float(rec.get("forced_deposit", 0.0) or 0.0),
+            "deposit_note": str(rec.get("deposit_note", "")),
+        }
         conn.execute(
             """
             INSERT INTO monthly_records (
               year_id, month, salary, year_end_bonus, subsidies, reimbursements,
-              income_note, rent, utilities, housing_note, forced_deposit, deposit_note
+              income_note, rent, utilities, housing_note, monthly_expense,
+              forced_deposit, deposit_note
             ) VALUES (
               :year_id, :month, :salary, :year_end_bonus, :subsidies, :reimbursements,
-              :income_note, :rent, :utilities, :housing_note, :forced_deposit, :deposit_note
+              :income_note, :rent, :utilities, :housing_note, :monthly_expense,
+              :forced_deposit, :deposit_note
             )
             ON CONFLICT(year_id, month) DO UPDATE SET
               salary = excluded.salary,
@@ -48,11 +65,71 @@ def upsert_monthly_records(
               rent = excluded.rent,
               utilities = excluded.utilities,
               housing_note = excluded.housing_note,
+              monthly_expense = excluded.monthly_expense,
               forced_deposit = excluded.forced_deposit,
               deposit_note = excluded.deposit_note
             """,
-            {**rec, "year_id": year_id},
+            values,
         )
+
+
+def get_tax_params(
+    conn: sqlite3.Connection, year_id: int
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT * FROM tax_params WHERE year_id = ?", (year_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_tax_params(
+    conn: sqlite3.Connection, year_id: int, params: dict[str, Any]
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO tax_params (
+          year_id, rent_city, rent_province, rent_district, rent_tier, elderly_option,
+          children_education_count, infant_care_count,
+          continuing_education, mortgage_interest,
+          severe_illness_annual, bonus_tax_method, custom_deduction
+        ) VALUES (
+          :year_id, :rent_city, :rent_province, :rent_district, :rent_tier, :elderly_option,
+          :children_education_count, :infant_care_count,
+          :continuing_education, :mortgage_interest,
+          :severe_illness_annual, :bonus_tax_method, :custom_deduction
+        )
+        ON CONFLICT(year_id) DO UPDATE SET
+          rent_city = excluded.rent_city,
+          rent_province = excluded.rent_province,
+          rent_district = excluded.rent_district,
+          rent_tier = excluded.rent_tier,
+          elderly_option = excluded.elderly_option,
+          children_education_count = excluded.children_education_count,
+          infant_care_count = excluded.infant_care_count,
+          continuing_education = excluded.continuing_education,
+          mortgage_interest = excluded.mortgage_interest,
+          severe_illness_annual = excluded.severe_illness_annual,
+          bonus_tax_method = excluded.bonus_tax_method,
+          custom_deduction = excluded.custom_deduction
+        """,
+        {
+            "year_id": year_id,
+            "rent_city": str(params.get("rent_city", "")),
+            "rent_province": str(params.get("rent_province", "")),
+            "rent_district": str(params.get("rent_district", "")),
+            "rent_tier": float(params.get("rent_tier", 0.0) or 0.0),
+            "elderly_option": str(params.get("elderly_option", "only_child")),
+            "children_education_count": int(params.get("children_education_count", 0) or 0),
+            "infant_care_count": int(params.get("infant_care_count", 0) or 0),
+            "continuing_education": int(params.get("continuing_education", 0) or 0),
+            "mortgage_interest": int(params.get("mortgage_interest", 0) or 0),
+            "severe_illness_annual": float(
+                params.get("severe_illness_annual", 0.0) or 0.0
+            ),
+            "bonus_tax_method": str(params.get("bonus_tax_method", "separate")),
+            "custom_deduction": float(params.get("custom_deduction", 0.0) or 0.0),
+        },
+    )
 
 
 def get_large_items(conn: sqlite3.Connection, year_id: int) -> list[dict[str, Any]]:
@@ -105,6 +182,8 @@ def upsert_insurance_params(
         """
         INSERT INTO social_insurance_params (
           year_id, base, monthly_salary, thirteenth_month_months, year_end_bonus_months,
+          thirteenth_coefficient, thirteenth_frequency,
+          year_end_bonus_coefficient, year_end_bonus_frequency,
           thirteenth_amount, year_end_bonus_amount, housing_subsidy,
           housing_fund_personal_rate, housing_fund_company_rate,
           pension_personal_rate, pension_company_rate, medical_personal_rate,
@@ -113,6 +192,8 @@ def upsert_insurance_params(
           injury_company_rate, unemployment_personal_rate, unemployment_company_rate
         ) VALUES (
           :year_id, :base, :monthly_salary, :thirteenth_month_months, :year_end_bonus_months,
+          :thirteenth_coefficient, :thirteenth_frequency,
+          :year_end_bonus_coefficient, :year_end_bonus_frequency,
           :thirteenth_amount, :year_end_bonus_amount, :housing_subsidy,
           :housing_fund_personal_rate, :housing_fund_company_rate,
           :pension_personal_rate, :pension_company_rate, :medical_personal_rate,
@@ -125,6 +206,10 @@ def upsert_insurance_params(
           monthly_salary = excluded.monthly_salary,
           thirteenth_month_months = excluded.thirteenth_month_months,
           year_end_bonus_months = excluded.year_end_bonus_months,
+          thirteenth_coefficient = excluded.thirteenth_coefficient,
+          thirteenth_frequency = excluded.thirteenth_frequency,
+          year_end_bonus_coefficient = excluded.year_end_bonus_coefficient,
+          year_end_bonus_frequency = excluded.year_end_bonus_frequency,
           thirteenth_amount = excluded.thirteenth_amount,
           year_end_bonus_amount = excluded.year_end_bonus_amount,
           housing_subsidy = excluded.housing_subsidy,
@@ -143,7 +228,22 @@ def upsert_insurance_params(
           unemployment_personal_rate = excluded.unemployment_personal_rate,
           unemployment_company_rate = excluded.unemployment_company_rate
         """,
-        {**params, "year_id": year_id},
+        {
+            **params,
+            "year_id": year_id,
+            "thirteenth_coefficient": float(
+                params.get("thirteenth_coefficient", 1.0) or 1.0
+            ),
+            "thirteenth_frequency": str(
+                params.get("thirteenth_frequency", "annual")
+            ),
+            "year_end_bonus_coefficient": float(
+                params.get("year_end_bonus_coefficient", 1.0) or 1.0
+            ),
+            "year_end_bonus_frequency": str(
+                params.get("year_end_bonus_frequency", "annual")
+            ),
+        },
     )
 
 
@@ -173,6 +273,38 @@ def replace_insurance_items(
                 float(item.get("personal_rate", 0.0) or 0.0),
                 float(item.get("company_rate", 0.0) or 0.0),
                 item.get("personal_fixed"),
+                index,
+            ),
+        )
+
+
+def list_salary_items(
+    conn: sqlite3.Connection, year_id: int
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM salary_items WHERE year_id = ? ORDER BY sort_order, id",
+        (year_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def replace_salary_items(
+    conn: sqlite3.Connection, year_id: int, items: Iterable[dict[str, Any]]
+) -> None:
+    conn.execute("DELETE FROM salary_items WHERE year_id = ?", (year_id,))
+    for index, item in enumerate(items):
+        conn.execute(
+            """
+            INSERT INTO salary_items(
+              year_id, item_type, name, amount, frequency, sort_order
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                year_id,
+                str(item.get("item_type", "performance")),
+                str(item.get("name", "自定义")),
+                float(item.get("amount", 0.0) or 0.0),
+                str(item.get("frequency", "monthly")),
                 index,
             ),
         )
@@ -479,7 +611,9 @@ def clear_imported_data(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM monthly_images")
     conn.execute("DELETE FROM large_items")
     conn.execute("DELETE FROM monthly_records")
+    conn.execute("DELETE FROM tax_params")
     conn.execute("DELETE FROM social_insurance_params")
+    conn.execute("DELETE FROM salary_items")
     conn.execute("DELETE FROM holdings")
     conn.execute("DELETE FROM years")
 

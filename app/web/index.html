@@ -85,7 +85,7 @@ tr:last-child td { border-bottom: none; }
   </header>
   <nav>
     <button data-tab="overview" class="active" onclick="showTab('overview')">总览</button>
-    <button data-tab="monthly" onclick="showTab('monthly')">月度流水</button>
+    <button data-tab="monthly" onclick="showTab('monthly')">开支管理</button>
     <button data-tab="holdings" onclick="showTab('holdings')">持仓</button>
     <button data-tab="reports" onclick="showTab('reports')">智能报告</button>
   </nav>
@@ -104,7 +104,7 @@ tr:last-child td { border-bottom: none; }
         <label>年份</label>
         <select id="monthYearSelect" onchange="loadMonthly()"></select>
       </div>
-      <h3>月度流水</h3>
+      <h3>开支管理</h3>
       <div id="monthlyTable"></div>
       <h3>大笔消费 / 收入</h3>
       <div id="largeItemsTable"></div>
@@ -113,7 +113,7 @@ tr:last-child td { border-bottom: none; }
       <div class="cards" id="holdingCards"></div>
       <h3>持仓列表</h3>
       <div id="holdingsTable"></div>
-      <h3>无代码黄金账户</h3>
+      <h3>黄金账户</h3>
       <div id="goldTable"></div>
     </section>
     <section id="tab-reports">
@@ -257,19 +257,16 @@ async function loadMonthly() {
       return [
         i + 1 + " 月",
         money(rec.salary || 0),
-        money(rec.year_end_bonus || 0),
-        money(rec.subsidies || 0),
-        money(rec.reimbursements || 0),
-        money(rec.rent || 0),
-        money(rec.utilities || 0),
-        money(rec.forced_deposit || 0),
         rec.income_note || "",
+        money(rec.rent || 0),
+        money(rec.monthly_expense || 0),
         rec.housing_note || "",
+        money(rec.forced_deposit || 0),
         rec.deposit_note || ""
       ];
     });
     document.getElementById("monthlyTable").innerHTML = htmlTable(
-      ["月份", "月工资", "年终奖", "补贴", "报销", "房租", "水电", "存款", "收入备注", "住房备注", "存款备注"],
+      ["月份", "月工资", "收入备注", "房租", "每月支出", "住房备注", "存款", "存款备注"],
       rows);
     const items = data.large_items.map(it => [
       it.item_date, it.name, money(it.amount), it.item_type === "income" ? "收入" : "支出", it.note

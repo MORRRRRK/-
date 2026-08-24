@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core import repository
+from ...edition import is_customer
 from ...services import calculations
 from ..image_dialog import ImagePreviewDialog
 from ..widgets import (
@@ -27,14 +28,27 @@ from ..widgets import (
     flash_saved,
     line_edit,
     make_button,
+    make_formula_button,
     make_money_spin,
     make_year_combo,
     money,
     pct,
 )
 
-NUMERIC_COLS = (1, 2, 3, 4, 6, 7, 9)
-NOTE_COLS = (5, 8, 10)
+NUMERIC_COLS = (1, 3, 4, 6)
+NOTE_COLS = (2, 5, 7)
+IMAGE_COL = 8
+
+MONTHLY_FORMULA_TEXT = (
+    "年度工资 = Σ 每月月工资\n"
+    "年度收入 = Σ(月工资 + 年终奖 + 各类补贴 + 报销)\n"
+    "住宿成本 = Σ 房租\n"
+    "年度消费 = Σ 每月支出\n"
+    "月均消费 = 年度消费 ÷ 12\n"
+    "理论结余 = 年度收入 + 住宿成本（房租为负数时自动抵扣）\n"
+    "存款 = Σ 每月强制存款\n"
+    "储蓄率 = 存款 ÷ 年度收入"
+)
 
 
 class MonthlyPage(QScrollArea):
@@ -44,6 +58,7 @@ class MonthlyPage(QScrollArea):
         self.on_change = on_change
         self._item_ids: list[int] = []
         self._deleted_items: list[dict] = []
+        self._formula_enabled = not is_customer()
         self.setWidgetResizable(True)
         self._content = QWidget()
         self.setWidget(self._content)
@@ -64,18 +79,24 @@ class MonthlyPage(QScrollArea):
         self.year_combo.currentTextChanged.connect(self._load_year)
         top.addWidget(self.year_combo)
         top.addStretch(1)
-        self.save_button = make_button("保存本月度流水", primary=True)
-        self.save_button.clicked.connect(self._save_monthly)
-        top.addWidget(self.save_button)
         layout.addLayout(top)
 
-        summary = Section("年度汇总（自动计算）")
+        summary_actions = []
+        if self._formula_enabled:
+            summary_actions.append(
+                make_formula_button(
+                    self, "年度汇总计算公式", MONTHLY_FORMULA_TEXT
+                )
+            )
+        summary = Section("年度汇总（自动计算）", actions=summary_actions)
         summary_grid = QGridLayout()
         self.summary_labels: dict[str, QLabel] = {}
         titles = [
             ("salary", "年度工资"),
             ("income", "年度收入"),
             ("housing_cost", "住宿成本"),
+            ("monthly_expense", "年度消费"),
+            ("avg_monthly_expense", "月均消费"),
             ("balance", "理论结余"),
             ("deposits", "存款"),
             ("savings_rate", "储蓄率"),
@@ -91,19 +112,21 @@ class MonthlyPage(QScrollArea):
         summary.add_layout(summary_grid)
         layout.addWidget(summary)
 
-        monthly_section = Section("月度流水（负数表示支出或取款，双击图片备注可预览）")
+        self.monthly_save_button = make_button("保存月度流水", primary=True)
+        self.monthly_save_button.clicked.connect(self._save_monthly)
+        monthly_section = Section(
+            "月度流水（收入 / 住房 / 存款，双击图片备注可预览）",
+            actions=[self.monthly_save_button],
+        )
 
-        self.monthly_table = QTableWidget(12, 12)
+        self.monthly_table = QTableWidget(12, 9)
         self.monthly_table.setHorizontalHeaderLabels(
             [
                 "月份",
                 "月工资",
-                "年终奖",
-                "各类补贴",
-                "报销",
                 "收入备注",
                 "房租",
-                "水电",
+                "每月支出",
                 "住房备注",
                 "存款（正=存）",
                 "存款备注",
@@ -123,7 +146,7 @@ class MonthlyPage(QScrollArea):
             month_item.setTextAlignment(Qt.AlignCenter)
             month_item.setFlags(month_item.flags() & ~Qt.ItemIsEditable)
             self.monthly_table.setItem(row, 0, month_item)
-            for col in NUMERIC_COLS + NOTE_COLS + (11,):
+            for col in NUMERIC_COLS + NOTE_COLS + (IMAGE_COL,):
                 item = QTableWidgetItem("")
                 item.setTextAlignment(Qt.AlignCenter)
                 self.monthly_table.setItem(row, col, item)
@@ -243,24 +266,21 @@ class MonthlyPage(QScrollArea):
                 rec = records.get(row + 1, {})
                 for col, key in [
                     (1, "salary"),
-                    (2, "year_end_bonus"),
-                    (3, "subsidies"),
-                    (4, "reimbursements"),
-                    (6, "rent"),
-                    (7, "utilities"),
-                    (9, "forced_deposit"),
+                    (3, "rent"),
+                    (4, "monthly_expense"),
+                    (6, "forced_deposit"),
                 ]:
                     item = self.monthly_table.item(row, col)
                     item.setText(_format_number(rec.get(key, 0.0)))
                 for col, key in [
-                    (5, "income_note"),
-                    (8, "housing_note"),
-                    (10, "deposit_note"),
+                    (2, "income_note"),
+                    (5, "housing_note"),
+                    (7, "deposit_note"),
                 ]:
                     item = self.monthly_table.item(row, col)
                     item.setText(str(rec.get(key, "")))
                 images = repository.list_monthly_images(self.conn, year_id, row + 1)
-                image_item = self.monthly_table.item(row, 11)
+                image_item = self.monthly_table.item(row, IMAGE_COL)
                 image_item.setText(f"{len(images)} 张图片，双击预览" if images else "")
         finally:
             self.monthly_table.blockSignals(False)
@@ -288,23 +308,19 @@ class MonthlyPage(QScrollArea):
             record = {"month": row + 1}
             for col, key in [
                 (1, "salary"),
-                (2, "year_end_bonus"),
-                (3, "subsidies"),
-                (4, "reimbursements"),
-                (6, "rent"),
-                (7, "utilities"),
-                (9, "forced_deposit"),
+                (3, "rent"),
+                (4, "monthly_expense"),
+                (6, "forced_deposit"),
             ]:
                 record[key] = _parse_number(self.monthly_table.item(row, col).text())
             for col, key in [
-                (5, "income_note"),
-                (8, "housing_note"),
-                (10, "deposit_note"),
+                (2, "income_note"),
+                (5, "housing_note"),
+                (7, "deposit_note"),
             ]:
                 record[key] = self.monthly_table.item(row, col).text().strip()
             if any(record.get(k) for k in (
-                "salary", "year_end_bonus", "subsidies", "reimbursements",
-                "rent", "utilities", "forced_deposit",
+                "salary", "rent", "monthly_expense", "forced_deposit",
             )) or any(record.get(k) for k in ("income_note", "housing_note", "deposit_note")):
                 records.append(record)
         return records
@@ -314,7 +330,7 @@ class MonthlyPage(QScrollArea):
         repository.upsert_monthly_records(self.conn, year_id, self._records_from_table())
         self.conn.commit()
         self._refresh_summary()
-        flash_saved(self.save_button)
+        flash_saved(self.monthly_save_button)
         self.on_change()
 
     def _refresh_summary(self) -> None:
@@ -323,6 +339,8 @@ class MonthlyPage(QScrollArea):
             "salary": money(summary["salary"]),
             "income": money(summary["income"]),
             "housing_cost": money(summary["housing_cost"]),
+            "monthly_expense": money(summary["monthly_expense"]),
+            "avg_monthly_expense": money(summary["avg_monthly_expense"]),
             "balance": money(summary["balance"]),
             "deposits": money(summary["deposits"]),
             "savings_rate": pct(summary["savings_rate"]),
@@ -331,7 +349,7 @@ class MonthlyPage(QScrollArea):
             self.summary_labels[key].setText(value)
 
     def _on_cell_double_clicked(self, row: int, col: int) -> None:
-        if col == 11:
+        if col == IMAGE_COL:
             self._open_image_dialog(row=row)
 
     def _open_image_dialog(self, row: int | None = None) -> None:
@@ -352,7 +370,7 @@ class MonthlyPage(QScrollArea):
         year_id = self._current_year_id()
         for row in range(12):
             images = repository.list_monthly_images(self.conn, year_id, row + 1)
-            item = self.monthly_table.item(row, 11)
+            item = self.monthly_table.item(row, IMAGE_COL)
             item.setText(f"{len(images)} 张图片，双击预览" if images else "")
 
     def _reload_items(self, year_id: int) -> None:

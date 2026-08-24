@@ -77,8 +77,8 @@ class MainWindow(QMainWindow):
         self.nav.setFixedWidth(168)
         for name in [
             "资产总览",
-            "月度流水",
-            "工资参数",
+            "开支管理",
+            "工资管理",
             "持仓管理",
             "资产规划",
             "智能报告",
@@ -388,6 +388,9 @@ class MainWindow(QMainWindow):
         if self._update_progress is not None:
             if total <= 0:
                 self._update_progress.setRange(0, 0)
+                self._update_progress.setLabelText(
+                    "正在校验更新包并备份数据…"
+                )
             else:
                 percent = max(0, min(100, int(current * 100 / total)))
                 self._update_progress.setRange(0, 100)

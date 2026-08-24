@@ -17,7 +17,8 @@ def year_summary(conn: sqlite3.Connection, year_id: int) -> dict[str, Any]:
         SELECT
           COALESCE(SUM(salary), 0) AS salary,
           COALESCE(SUM(salary + year_end_bonus + subsidies + reimbursements), 0) AS income,
-          COALESCE(SUM(rent + utilities), 0) AS housing_cost,
+          COALESCE(SUM(rent), 0) AS housing_cost,
+          COALESCE(SUM(monthly_expense), 0) AS monthly_expense,
           COALESCE(SUM(forced_deposit), 0) AS deposits
         FROM monthly_records WHERE year_id = ?
         """,
@@ -37,12 +38,15 @@ def year_summary(conn: sqlite3.Connection, year_id: int) -> dict[str, Any]:
     salary = float(row["salary"])
     income = float(row["income"])
     housing_cost = float(row["housing_cost"])
+    monthly_expense = float(row["monthly_expense"])
     deposits = float(row["deposits"])
     balance = income + housing_cost
     return {
         "salary": salary,
         "income": income,
         "housing_cost": housing_cost,
+        "monthly_expense": monthly_expense,
+        "avg_monthly_expense": monthly_expense / 12.0,
         "balance": balance,
         "deposits": deposits,
         "savings_rate": deposits / income if income else 0.0,
@@ -119,14 +123,54 @@ def investment_summary(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def social_insurance_from_data(
-    p: dict[str, Any], items: list[dict[str, Any]]
+    p: dict[str, Any],
+    items: list[dict[str, Any]],
+    salary_items: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     monthly = float(p.get("monthly_salary") or 0)
-    thirteenth_amount = float(p.get("thirteenth_amount") or monthly)
-    year_bonus_amount = float(p.get("year_end_bonus_amount") or monthly)
-    thirteenth_months = float(p.get("thirteenth_month_months") or 0)
-    year_bonus_months = float(p.get("year_end_bonus_months") or 0)
-    subsidy = float(p.get("housing_subsidy") or 0)
+    salary_items = salary_items or []
+    base_annual = monthly * 12
+    thirteen_coefficient = float(p.get("thirteenth_coefficient") or 1.0)
+    thirteen_frequency = str(p.get("thirteenth_frequency") or "annual")
+    bonus_coefficient = float(p.get("year_end_bonus_coefficient") or 1.0)
+    bonus_frequency = str(p.get("year_end_bonus_frequency") or "annual")
+    thirteen_annual = (
+        monthly
+        * thirteen_coefficient
+        * _frequency_factor(thirteen_frequency)
+    )
+    bonus_annual = (
+        monthly
+        * bonus_coefficient
+        * _frequency_factor(bonus_frequency)
+    )
+    performance_annual = 0.0
+    subsidy_annual = 0.0
+    salary_detail = []
+    for item in salary_items:
+        amount = float(item.get("amount") or 0.0)
+        frequency = str(item.get("frequency") or "monthly")
+        annual = amount * _frequency_factor(frequency)
+        if str(item.get("item_type") or "performance") == "subsidy":
+            subsidy_annual += annual
+        else:
+            performance_annual += annual
+        salary_detail.append(
+            {
+                "item_type": item.get("item_type", "performance"),
+                "name": item.get("name", ""),
+                "amount": amount,
+                "frequency": frequency,
+                "annual": annual,
+            }
+        )
+    total_salary = (
+        base_annual
+        + thirteen_annual
+        + bonus_annual
+        + performance_annual
+        + subsidy_annual
+    )
 
     detail = []
     personal_total = 0.0
@@ -156,20 +200,20 @@ def social_insurance_from_data(
             }
         )
 
-    gross_income = (
-        monthly * 12
-        + thirteenth_amount * thirteenth_months
-        + year_bonus_amount * year_bonus_months
-        + subsidy * 12
-        - personal_total * 12
-    )
-    # 与 Excel 汇总页一致：总包在税前收入基础上再加公司缴纳与租房补贴 12 个月。
-    total_package = gross_income + company_total * 12 + subsidy * 12
+    gross_income = total_salary - personal_total * 12
+    total_package = total_salary - personal_total * 12 + company_total * 12
     return {
         "params": p,
         "items": detail,
+        "salary_items": salary_detail,
         "personal_total": personal_total,
         "company_total": company_total,
+        "base_annual": base_annual,
+        "thirteen_annual": thirteen_annual,
+        "bonus_annual": bonus_annual,
+        "performance_annual": performance_annual,
+        "subsidy_annual": subsidy_annual,
+        "total_salary": total_salary,
         "gross_income": gross_income,
         "total_package": total_package,
     }
@@ -180,9 +224,18 @@ def social_insurance(conn: sqlite3.Connection, year_id: int) -> dict[str, Any]:
         "SELECT * FROM social_insurance_params WHERE year_id = ?", (year_id,)
     ).fetchone()
     items = repository.list_insurance_items(conn, year_id)
+    salary_items = repository.list_salary_items(conn, year_id)
     if row is None:
-        return {"has_params": False, "items": items}
+        return {"has_params": False, "items": items, "salary_items": salary_items}
     return {
         "has_params": True,
-        **social_insurance_from_data(dict(row), items),
+        **social_insurance_from_data(dict(row), items, salary_items),
     }
+
+
+def _frequency_factor(frequency: str) -> float:
+    if frequency == "monthly":
+        return 12.0
+    if frequency == "quarterly":
+        return 4.0
+    return 1.0
