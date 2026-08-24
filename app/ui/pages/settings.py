@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from ...core import repository
 from ...core.paths import backups_dir, exports_dir
 from ...services import llm
+from ...services.release import DEFAULT_CODE_REPO
 from ...edition import is_customer
 from ..widgets import (
     NoWheelSpinBox,
@@ -312,7 +313,7 @@ class SettingsPage(QScrollArea):
             repository.get_setting(self.conn, "github_token", "")
         )
         self.code_repo_edit.setText(
-            repository.get_setting(self.conn, "code_repo", "")
+            repository.get_setting(self.conn, "code_repo", DEFAULT_CODE_REPO)
         )
         self.llm_base_url_edit.setText(
             repository.get_setting(self.conn, "llm_base_url", llm.DEFAULT_BASE_URL)
@@ -384,7 +385,9 @@ class SettingsPage(QScrollArea):
             self.conn, "github_token", self.github_token_edit.text().strip()
         )
         repository.set_setting(
-            self.conn, "code_repo", self.code_repo_edit.text().strip()
+            self.conn,
+            "code_repo",
+            self.code_repo_edit.text().strip() or DEFAULT_CODE_REPO,
         )
         self.conn.commit()
         flash_saved(self.common_save_button)

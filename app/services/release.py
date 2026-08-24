@@ -162,7 +162,7 @@ def push_source(
     push_url = (
         f"https://x-access-token:{token}@github.com/{code_repo}.git"
     )
-    code, output = _git(["push", push_url, branch], source_root)
+    code, output = _git(["push", push_url, f"{branch}:main"], source_root)
     if code != 0:
         raise RuntimeError("源码推送失败：\n" + output[-800:])
 

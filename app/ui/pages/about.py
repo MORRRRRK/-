@@ -233,7 +233,7 @@ class AboutPage(QWidget):
         repo = repository.get_setting(self.conn, "update_repo", "").strip()
         code_repo = repository.get_setting(
             self.conn, "code_repo", DEFAULT_CODE_REPO
-        ).strip()
+        ).strip() or DEFAULT_CODE_REPO
         token = repository.get_setting(self.conn, "github_token", "").strip()
         if not repo:
             repo = DEFAULT_REPO
