@@ -17,6 +17,7 @@ from ..core.paths import app_root
 GITHUB_API = "https://api.github.com"
 GITHUB_UPLOADS = "https://uploads.github.com"
 DEFAULT_REPO = "MORRRRRK/finance-releases"
+DEFAULT_CODE_REPO = "MORRRRRK/-"
 DEV_TOP = {"财务软件.exe", "updater_helper.exe", "_internal"}
 CUSTOMER_TOP = {
     "财务软件客户版.exe",
@@ -120,6 +121,50 @@ def build_customer() -> None:
     (customer_app / "update_config.ini").write_text(
         "repo=MORRRRRK/finance-releases\n", encoding="ascii"
     )
+
+
+def _git(args: list[str], cwd: Path) -> tuple[int, str]:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return result.returncode, (result.stdout or "") + (result.stderr or "")
+
+
+def push_source(
+    version: str,
+    notes: str,
+    code_repo: str,
+    token: str,
+) -> None:
+    """提交并推送当前源码到源码仓库。"""
+    source_root = _find_source_root()
+    if not (source_root / ".git").exists():
+        raise RuntimeError("项目目录不是 Git 仓库，无法上传源码")
+    code_repo = (code_repo or DEFAULT_CODE_REPO).strip().strip("/")
+    message = f"feat: V{version} 更新"
+    if notes.strip():
+        message += f" {notes.strip()[:80]}"
+    code, output = _git(["add", "-A"], source_root)
+    if code != 0:
+        raise RuntimeError("git add 失败：\n" + output)
+    code, output = _git(["commit", "-m", message], source_root)
+    if code not in (0, 1):
+        raise RuntimeError("git commit 失败：\n" + output)
+    code, output = _git(["rev-parse", "--abbrev-ref", "HEAD"], source_root)
+    if code != 0:
+        raise RuntimeError("无法获取当前分支：\n" + output)
+    branch = output.strip() or "master"
+    push_url = (
+        f"https://x-access-token:{token}@github.com/{code_repo}.git"
+    )
+    code, output = _git(["push", push_url, branch], source_root)
+    if code != 0:
+        raise RuntimeError("源码推送失败：\n" + output[-800:])
 
 
 def _sha256(path: Path) -> str:
@@ -318,6 +363,7 @@ def publish(
     notes: str,
     customer_only: bool = False,
     build_first: bool = False,
+    code_repo: str = "",
 ) -> str:
     repo = (repo or DEFAULT_REPO).strip().strip("/")
     token = (token or "").strip()
@@ -325,6 +371,8 @@ def publish(
         raise RuntimeError("未填写 GitHub Token，请在“设置”中填写")
     if build_first:
         build_customer()
+    if code_repo:
+        push_source(version, notes, code_repo, token)
     packaged = package(version, customer_only)
     write_manifests(version, repo, notes, packaged, customer_only)
     _, _, _, releases_dir = _project_layout()

@@ -121,11 +121,17 @@ class SettingsPage(QScrollArea):
         self.github_token_edit.setEchoMode(QLineEdit.Password)
         self.github_token_edit.setPlaceholderText("私有仓库更新需要填写，客户版无需填写")
         grid.addWidget(self.github_token_edit, 7, 1)
+        self.code_repo_label = QLabel("GitHub 源码仓库")
+        grid.addWidget(self.code_repo_label, 8, 0)
+        self.code_repo_edit = line_edit(placeholder="如 MORRRRRK/-")
+        grid.addWidget(self.code_repo_edit, 8, 1)
         if is_customer():
             self.update_repo_label.setVisible(False)
             self.update_repo_edit.setVisible(False)
             self.github_token_label.setVisible(False)
             self.github_token_edit.setVisible(False)
+            self.code_repo_label.setVisible(False)
+            self.code_repo_edit.setVisible(False)
 
         note = QLabel(
             "设置会保存在本地数据库中；未自定义路径时默认使用程序目录下的 "
@@ -133,7 +139,7 @@ class SettingsPage(QScrollArea):
             "更新仓库填写 GitHub 的 owner/repo。"
         )
         note.setObjectName("fieldLabel")
-        grid.addWidget(note, 8, 0, 1, 3)
+        grid.addWidget(note, 9, 0, 1, 3)
         section.add_layout(grid)
         layout.addWidget(section)
 
@@ -305,6 +311,9 @@ class SettingsPage(QScrollArea):
         self.github_token_edit.setText(
             repository.get_setting(self.conn, "github_token", "")
         )
+        self.code_repo_edit.setText(
+            repository.get_setting(self.conn, "code_repo", "")
+        )
         self.llm_base_url_edit.setText(
             repository.get_setting(self.conn, "llm_base_url", llm.DEFAULT_BASE_URL)
         )
@@ -373,6 +382,9 @@ class SettingsPage(QScrollArea):
         repository.set_setting(self.conn, "update_repo", self.update_repo_edit.text().strip())
         repository.set_setting(
             self.conn, "github_token", self.github_token_edit.text().strip()
+        )
+        repository.set_setting(
+            self.conn, "code_repo", self.code_repo_edit.text().strip()
         )
         self.conn.commit()
         flash_saved(self.common_save_button)

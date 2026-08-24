@@ -14,13 +14,14 @@ from PySide6.QtWidgets import (
 from ... import VERSION_LABEL, __version__
 from ...core import repository
 from ...edition import is_customer
-from ...services.release import DEFAULT_REPO
+from ...services.release import DEFAULT_CODE_REPO, DEFAULT_REPO
 from ..release_worker import ReleasePushWorker
 from ..widgets import make_button
 
 CHANGELOG = """V3.5.1
 · 持仓管理新增“净值”栏：股票/ETF/基金/黄金实时价格与净值直接展示，无价格时按持仓市值÷份额回填
 · 开发版补全“查看公式”：持仓总持仓/累计收益/收益率、资产总览、年度汇总、资产规划均增加公式说明
+· 一键推送集成源码上传：构建客户版时同步提交并推送源码到 GitHub 源码仓库
 
 V3.5
 · 所有可保存模块增加独立保存按钮：工资详情、N险N金、专项附加扣除、设置各模块分开保存
@@ -209,7 +210,7 @@ class AboutPage(QWidget):
             QMessageBox.question(
                 self,
                 "确认推送",
-                "将自动构建客户版、打包并发布到 GitHub，"
+                "将自动构建客户版、打包、上传源码并发布到 GitHub，"
                 "整个过程需要几分钟。是否继续？",
             )
             != QMessageBox.Yes
@@ -230,6 +231,9 @@ class AboutPage(QWidget):
         if not ok:
             return
         repo = repository.get_setting(self.conn, "update_repo", "").strip()
+        code_repo = repository.get_setting(
+            self.conn, "code_repo", DEFAULT_CODE_REPO
+        ).strip()
         token = repository.get_setting(self.conn, "github_token", "").strip()
         if not repo:
             repo = DEFAULT_REPO
@@ -245,11 +249,12 @@ class AboutPage(QWidget):
             repo,
             token,
             notes.strip(),
+            code_repo=code_repo,
             parent=self,
         )
         self._release_worker.finished.connect(self._on_release_finished)
         self._release_worker.failed.connect(self._on_release_failed)
-        self.update_status.setText("正在构建客户版并推送更新…")
+        self.update_status.setText("正在构建客户版、上传源码并推送更新…")
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setVisible(True)
         self._release_worker.start()

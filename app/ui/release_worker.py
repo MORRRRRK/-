@@ -17,6 +17,7 @@ class ReleasePushWorker(QThread):
         notes: str,
         customer_only: bool = False,
         build_first: bool = True,
+        code_repo: str = "",
         parent=None,
     ):
         super().__init__(parent)
@@ -26,6 +27,7 @@ class ReleasePushWorker(QThread):
         self.notes = notes
         self.customer_only = customer_only
         self.build_first = build_first
+        self.code_repo = code_repo
 
     def run(self) -> None:
         try:
@@ -36,6 +38,7 @@ class ReleasePushWorker(QThread):
                 self.notes,
                 self.customer_only,
                 self.build_first,
+                self.code_repo,
             )
         except Exception as exc:
             self.failed.emit(str(exc))
