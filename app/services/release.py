@@ -6,11 +6,11 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import datetime
 from pathlib import Path
 
 from ..core.paths import app_root
@@ -66,20 +66,14 @@ def customer_build_dir() -> Path:
 def build_customer() -> None:
     """在项目目录执行 PyInstaller 构建客户版（无交互）。
 
-    构建前会自动关闭从 dist\\财务软件客户版 启动的进程，并把旧目录连同
-    data/backups/exports 移到 dist_backup，构建后再还原数据目录，
-    确保客户版本地测试数据不会因重新构建被清除。
+    先构建到临时目录，再只替换程序文件（exe/_internal/updater_helper/配置），
+    完全不动 data/backups/exports，客户版本地数据永远不会被构建清除。
     """
     source_root, _, _, _ = _project_layout()
     customer_app = source_root / "dist" / "财务软件客户版"
-    backup_dir = source_root / "dist_backup"
-    backup_path: Path | None = None
-    if customer_app.exists():
-        _stop_customer_processes(customer_app)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = backup_dir / f"财务软件客户版_{stamp}"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(customer_app), str(backup_path))
+    new_app = source_root / "dist" / "财务软件客户版_new"
+    if new_app.exists():
+        shutil.rmtree(new_app)
     python_exe = source_root / ".venv" / "Scripts" / "python.exe"
     if not python_exe.exists():
         python_exe = Path(sys.executable)
@@ -111,6 +105,10 @@ def build_customer() -> None:
             "app\\assets;app\\assets",
             "--add-data",
             "app\\web;app\\web",
+            "--distpath",
+            "dist\\财务软件客户版_new",
+            "--workpath",
+            "build\\customer_work",
             "run.py",
         ],
     ]
@@ -126,24 +124,44 @@ def build_customer() -> None:
         if result.returncode != 0:
             tail = (result.stdout or "")[-800:] + (result.stderr or "")[-800:]
             raise RuntimeError("客户版构建失败：\n" + tail)
-    customer_app.mkdir(parents=True, exist_ok=True)
-    (customer_app / "edition.ini").write_text("customer\n", encoding="ascii")
+    (new_app / "edition.ini").write_text("customer\n", encoding="ascii")
     shutil.copy2(
         source_root / "dist" / "updater_helper.exe",
-        customer_app / "updater_helper.exe",
+        new_app / "updater_helper.exe",
     )
-    (customer_app / "update_config.ini").write_text(
+    (new_app / "update_config.ini").write_text(
         "repo=MORRRRRK/finance-releases\n", encoding="ascii"
     )
-    if backup_path is not None and backup_path.exists():
-        for folder in ("data", "backups", "exports"):
-            source = backup_path / folder
-            if source.exists():
-                shutil.copytree(source, customer_app / folder, dirs_exist_ok=True)
+    if not customer_app.exists():
+        shutil.move(str(new_app), str(customer_app))
+        return
+    _stop_customer_processes(customer_app)
+    _replace_customer_program(new_app, customer_app)
+    shutil.rmtree(new_app)
+
+
+def _replace_customer_program(new_app: Path, customer_app: Path) -> None:
+    """用新构建的程序文件覆盖旧客户版，保留 data/backups/exports。"""
+    for item in new_app.iterdir():
+        target = customer_app / item.name
+        if item.name == "_internal":
+            old = customer_app / "_internal"
+            if old.exists():
+                shutil.rmtree(old)
+            shutil.copytree(item, old)
+        elif item.is_file():
+            shutil.copy2(item, target)
+        # data/backups/exports 等目录不复制，旧目录原样保留
 
 
 def _stop_customer_processes(customer_app: Path) -> None:
     """关闭从指定客户版目录启动的进程，避免构建时文件被占用。"""
+    subprocess.run(
+        ["taskkill.exe", "/F", "/IM", "财务软件客户版.exe"],
+        capture_output=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        check=False,
+    )
     escaped = str(customer_app).replace("'", "''")
     command = (
         "Get-Process | Where-Object { $_.Path -like '"
@@ -156,6 +174,7 @@ def _stop_customer_processes(customer_app: Path) -> None:
         timeout=30,
         check=False,
     )
+    time.sleep(1)
 
 
 def _git(args: list[str], cwd: Path) -> tuple[int, str]:
