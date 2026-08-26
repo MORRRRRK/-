@@ -3,7 +3,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../db/database.dart';
 import '../services/api.dart';
-import '../services/sync.dart';
 import '../version.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -82,22 +81,6 @@ class _SettingsPageState extends State<SettingsPage> {
       return null;
     }
     return ApiClient(baseUrl: server, token: token);
-  }
-
-  Future<void> _syncNow() async {
-    final api = await _client();
-    if (api == null) return;
-    setState(() => _busy = true);
-    try {
-      await SyncService.fullSync(api);
-      _status = '同步完成';
-      _toast('同步完成');
-    } catch (e) {
-      _status = '同步失败';
-      _toast('同步失败：$e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   Future<void> _checkUpdate() async {
