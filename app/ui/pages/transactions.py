@@ -186,8 +186,12 @@ class TransactionsPage(QScrollArea):
             dialog.type_combo.setCurrentIndex(max(0, index))
         if dialog.exec() != QDialog.Accepted:
             return
-        transaction_service.add_transaction(self.conn, **dialog.values())
-        self.conn.commit()
+        try:
+            transaction_service.add_transaction(self.conn, **dialog.values())
+            self.conn.commit()
+        except Exception as exc:
+            QMessageBox.warning(self, "记账失败", f"保存失败：{exc}")
+            return
         self.refresh()
         self.on_change()
         QMessageBox.information(self, "记账成功", "交易已保存。")

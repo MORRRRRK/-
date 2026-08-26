@@ -47,7 +47,7 @@ THEME_MODES = [
     ("跟随系统", "system"),
 ]
 
-DEFAULT_WEBDAV_URL = "https://dav.jianguoyun.com/dav/"
+DEFAULT_WEBDAV_URL = "https://dav.jianguoyun.com/dav/我的坚果云/"
 DEFAULT_WEBDAV_USER = "jiushengquan999@gmail.com"
 DEFAULT_WEBDAV_PASS = "aa57t3djrn3jcpy8"
 DEFAULT_SYNC_KEY = "88888888"

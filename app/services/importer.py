@@ -55,7 +55,10 @@ def import_transactions_csv(conn: sqlite3.Connection, file_path: Path) -> int:
             if not account_id:
                 continue
             trans_type = row.get("type") or row.get("类型")
-            amount = _num(row.get("amount") or row.get("金额"))
+            try:
+                amount = float(row.get("amount") or row.get("金额") or 0)
+            except ValueError:
+                amount = 0.0
             if not trans_type or amount <= 0:
                 continue
             transaction_service.add_transaction(
@@ -85,45 +88,62 @@ def import_wechat_bill(conn: sqlite3.Connection, file_path: Path) -> int:
 
 
 def import_bluecoins_csv(conn: sqlite3.Connection, file_path: Path) -> int:
-    """导入 BlueCoins 导出的 CSV 交易记录。"""
+    """导入 BlueCoins 中文导出的 CSV 交易记录。
+
+    表头：类型, 日期, 设置时间, 名称, 金额, 货币, 汇率, 类别组, 类别, 账户, 备注, 标签, 状态
+    """
     import csv
 
     from . import account_service, category_service, transaction_service
 
     count = 0
+    skipped_transfers = 0
     with file_path.open("r", encoding="utf-8-sig") as fh:
         reader = csv.DictReader(fh)
         accounts = {a["name"]: a["id"] for a in account_service.get_accounts(conn)}
         categories = {
-            c["name"]: c["id"] for c in conn.execute(
-                "SELECT id, name FROM transaction_categories"
+            c["name"]: c["id"]
+            for c in conn.execute(
+                "SELECT id, name FROM transaction_categories WHERE parent_id IS NULL"
             )
         }
         for row in reader:
-            date = _text(row.get("Date") or row.get("日期") or "")
-            amount_text = _text(row.get("Amount") or row.get("金额") or "0")
-            amount = _num(amount_text.replace(",", "").replace("¥", "").strip())
+            trans_type_text = _text(row.get("类型") or "")
+            date_text = _text(row.get("日期") or "")
+            date = date_text[:10]
+            amount_text = _text(row.get("金额") or "0").replace(",", "").replace("¥", "")
+            try:
+                amount = abs(float(amount_text))
+            except ValueError:
+                amount = 0.0
             if not date or amount == 0:
                 continue
-            merchant = _text(row.get("Description") or row.get("商家") or "")
-            note = _text(row.get("Note") or row.get("备注") or "")
-            category_name = _text(row.get("Category") or row.get("分类") or "其他支出")
-            account_name = _text(row.get("Account") or row.get("账户") or "默认账户")
-            expense_type = _text(row.get("ExpenseType") or row.get("类型") or "")
-            trans_type = "income" if "income" in expense_type.lower() or amount < 0 else "expense"
-            amount = abs(amount)
+            if trans_type_text in ("转账", "Transfer"):
+                skipped_transfers += 1
+                continue
+            trans_type = "income" if trans_type_text in ("收入", "Income") else "expense"
+            merchant = _text(row.get("名称") or "")
+            note = _text(row.get("备注") or "")
+            category_name = _text(row.get("类别") or "其他支出")
+            account_name = _text(row.get("账户") or "默认账户")
             if account_name not in accounts:
                 account_id = account_service.add_account(conn, account_name, "other")
                 accounts[account_name] = account_id
             else:
                 account_id = accounts[account_name]
             if category_name not in categories:
-                category_id = category_service.add_category(
-                    conn, category_name, trans_type
-                )
-                categories[category_name] = category_id
-            else:
-                category_id = categories[category_name]
+                system = conn.execute(
+                    "SELECT id FROM transaction_categories "
+                    "WHERE name = ? AND is_system = 1 LIMIT 1",
+                    (category_name,),
+                ).fetchone()
+                if system:
+                    categories[category_name] = system["id"]
+                else:
+                    categories[category_name] = category_service.add_category(
+                        conn, category_name, trans_type
+                    )
+            category_id = categories[category_name]
             transaction_service.add_transaction(
                 conn,
                 trans_date=date,

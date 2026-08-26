@@ -34,7 +34,6 @@ from .pages.about import AboutPage
 from .pages.accounts import AccountsPage
 from .pages.holdings import HoldingsPage
 from .pages.insurance import InsurancePage
-from .pages.monthly import MonthlyPage
 from .pages.overview import OverviewPage
 from .pages.planning import PlanningPage
 from .pages.reports import ReportsPage
@@ -87,7 +86,6 @@ class MainWindow(QMainWindow):
             "智能报告",
             "设置",
             "关于",
-            "历史汇总",
         ]:
             self.nav.addItem(name)
         self.nav.currentRowChanged.connect(self._switch_page)
@@ -108,7 +106,6 @@ class MainWindow(QMainWindow):
             self.reports_page,
             self.settings_page,
             self.about_page,
-            MonthlyPage(self.db.conn, self.refresh_all),
         ]
         for page in self.pages:
             self.stack.addWidget(page)

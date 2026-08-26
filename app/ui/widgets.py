@@ -272,6 +272,11 @@ class TransactionDialog(QDialog):
         if float(self.amount_spin.value()) <= 0:
             QMessageBox.warning(self, "提示", "金额必须大于 0")
             return
+        if self.account_combo.currentData() is None:
+            QMessageBox.warning(
+                self, "提示", "请先到“账户管理”创建账户，再开始记账。"
+            )
+            return
         if self.type_combo.currentData() == "transfer" and (
             self.account_combo.currentData() == self.to_account_combo.currentData()
         ):

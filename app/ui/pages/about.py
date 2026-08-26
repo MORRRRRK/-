@@ -18,7 +18,13 @@ from ...services.release import DEFAULT_CODE_REPO, DEFAULT_REPO
 from ..release_worker import ReleasePushWorker
 from ..widgets import make_button
 
-CHANGELOG = """V4.3
+CHANGELOG = """V4.3.1
+· 移除“历史汇总”入口
+· 修复坚果云 WebDAV：默认使用“我的坚果云”可写目录，云同步可直接运行
+· 修复记账流水按钮反馈，未创建账户时明确提示
+· 支持 BlueCoins 中文 CSV 格式导入（支出/收入/账户/分类自动匹配）
+
+V4.3
 · 新增账号注册/登录：注册信息加密保存在同步服务端
 · 记账流水支持 BlueCoins CSV 联动导入，按钮操作增加明确反馈
 · 新增删除历史记录功能

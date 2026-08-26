@@ -20,10 +20,10 @@ app = FastAPI(title="个人财务 V4 同步服务", version="0.1.0")
 
 SERVER_PASSWORD = os.environ.get("FINANCE_SERVER_PASSWORD", "finance-v4")
 SERVER_PORT = 8766  # 固定端口，后续版本保持 8766，避免客户端反复改配置
-APP_VERSION = "4.3.0"
+APP_VERSION = "4.3.1"
 APP_NOTES = (
-    "V4.3：新增账号注册/登录、BlueCoins 联动导入、历史记录删除、"
-    "年份筛选修复、手机端远程 APK 更新；版本统一为 V4.3。"
+    "V4.3.1：移除历史汇总，修复坚果云 WebDAV 目录权限，"
+    "修复记账按钮反馈，支持 BlueCoins 中文 CSV 导入。"
 )
 APK_URL = os.environ.get("FINANCE_APK_URL", "")
 
