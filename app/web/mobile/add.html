@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>快速记账</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="header"><h1>快速记账</h1></div>
+  <form>
+    <div class="type-group">
+      <button type="button" data-type="expense" class="active">支出</button>
+      <button type="button" data-type="income">收入</button>
+      <button type="button" data-type="transfer">转账</button>
+    </div>
+    <label>金额</label><input id="amount" type="number" step="0.01" placeholder="0.00">
+    <label>分类</label><select id="category"></select>
+    <label>账户</label><select id="account"></select>
+    <label>转入账户</label><select id="toAccount"></select>
+    <label>日期</label><input id="date" type="date">
+    <label>商家</label><input id="merchant" placeholder="商家/用途">
+    <label>备注</label><textarea id="note"></textarea>
+    <button class="primary" type="button" onclick="save()">保存</button>
+  </form>
+  <nav class="bottom">
+    <a href="index.html">首页</a>
+    <a href="transactions.html">记账</a>
+    <a href="accounts.html">账户</a>
+  </nav>
+  <script src="app.js"></script>
+  <script>
+    navActive();
+    let type = 'expense';
+    document.querySelectorAll('.type-group button').forEach(b => b.onclick = () => {
+      document.querySelectorAll('.type-group button').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      type = b.dataset.type;
+    });
+    (async () => {
+      const accounts = await api('/api/accounts');
+      const opts = accounts.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+      document.getElementById('account').innerHTML = opts;
+      document.getElementById('toAccount').innerHTML = opts;
+      const categories = await api('/api/categories');
+      document.getElementById('category').innerHTML = categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      document.getElementById('date').value = new Date().toISOString().substring(0,10);
+    })();
+    async function save() {
+      const accountId = document.getElementById('account').value;
+      const toAccountId = type === 'transfer' ? document.getElementById('toAccount').value : null;
+      await api('/api/transactions', {
+        method: 'POST',
+        body: JSON.stringify({
+          type, amount: Number(document.getElementById('amount').value),
+          category_id: Number(document.getElementById('category').value) || null,
+          account_id: Number(accountId),
+          to_account_id: toAccountId ? Number(toAccountId) : null,
+          trans_date: document.getElementById('date').value,
+          merchant: document.getElementById('merchant').value,
+          note: document.getElementById('note').value
+        })
+      });
+      alert('已保存');
+      location.href = 'transactions.html';
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>个人财务</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="header"><h1>个人财务</h1></div>
+  <div class="cards">
+    <div class="card"><h4>总资产</h4><b id="assets">0</b></div>
+    <div class="card"><h4>总负债</h4><b id="liabilities">0</b></div>
+    <div class="card"><h4>净资产</h4><b id="netWorth">0</b></div>
+  </div>
+  <div class="cards">
+    <div class="card"><h4>本月收入</h4><b id="income">0</b></div>
+    <div class="card"><h4>本月支出</h4><b id="expense">0</b></div>
+    <div class="card"><h4>本月结余</h4><b id="balance">0</b></div>
+  </div>
+  <div class="list"><h3>最近交易</h3><div id="recent"></div></div>
+  <a class="fab" href="add.html">+</a>
+  <nav class="bottom">
+    <a href="index.html">首页</a>
+    <a href="transactions.html">记账</a>
+    <a href="accounts.html">账户</a>
+  </nav>
+  <script src="app.js"></script>
+  <script>
+    navActive();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js');
+    (async () => {
+      await requireAccess();
+      try {
+        const accounts = await api('/api/accounts');
+        const assets = accounts.filter(a => !a.is_liability).reduce((s,a)=>s+Number(a.current_balance||0),0);
+        const liabilities = accounts.filter(a => a.is_liability).reduce((s,a)=>s+Math.abs(Number(a.current_balance||0)),0);
+        document.getElementById('assets').textContent = money(assets);
+        document.getElementById('liabilities').textContent = money(liabilities);
+        document.getElementById('netWorth').textContent = money(assets - liabilities);
+        const now = new Date();
+        const month = String(now.getMonth()+1).padStart(2,'0');
+        const m = await api(`/api/summary/monthly?year=${now.getFullYear()}&month=${month}`);
+        document.getElementById('income').textContent = money(m.income);
+        document.getElementById('expense').textContent = money(m.expense);
+        document.getElementById('balance').textContent = money(m.balance);
+        const tx = await api('/api/transactions');
+        document.getElementById('recent').innerHTML = (tx.transactions||[]).slice(0,10).map(t =>
+          `<div class="item"><span>${t.trans_date} ${t.merchant||''}</span>${amountHtml(t.type,t.amount)}</div>`
+        ).join('') || '<p>暂无交易</p>';
+      } catch (e) { alert(e.message); }
+    })();
+  </script>
+</body>
+</html>

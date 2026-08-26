@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from ...core import repository
 from ...edition import is_customer
-from ...services import calculations
+from ...services import account_service, calculations, transaction_service
 from ..charts import bar_chart, pie_chart, update_bar_chart, update_pie_chart
 from ..widgets import Section, StatCard, make_formula_button, money, pct
 
@@ -117,9 +117,19 @@ class OverviewPage(QScrollArea):
         layout.addStretch(1)
 
     def refresh(self) -> None:
+        has_accounts = bool(
+            self.conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone()
+        )
+        has_transactions = bool(
+            self.conn.execute("SELECT 1 FROM transactions LIMIT 1").fetchone()
+        )
         totals = calculations.totals(self.conn)
         invest = calculations.investment_summary(self.conn)
-        net_worth = totals["deposits"] + invest["total_holding"]
+        if has_accounts:
+            account_summary = account_service.get_account_summary(self.conn)
+            net_worth = account_summary["net_worth"]
+        else:
+            net_worth = totals["deposits"] + invest["total_holding"]
         self.net_worth_card.set_value(money(net_worth), "存款 + 投资持仓")
         self.deposit_card.set_value(money(totals["deposits"]), "")
         self.holding_card.set_value(money(invest["total_holding"]), "")
@@ -214,13 +224,35 @@ class OverviewPage(QScrollArea):
                 item.setTextAlignment(Qt.AlignCenter)
                 self.summary_table.setItem(r, c, item)
 
-        allocation = {
-            "存款": totals["deposits"],
-            "基金": invest["categories"].get("基金", {}).get("holding", 0),
-            "黄金": invest["categories"].get("黄金", {}).get("holding", 0),
-            "黄金账户": invest["categories"].get("黄金账户", {}).get("holding", 0),
-            "股票": invest["categories"].get("股票", {}).get("holding", 0),
-        }
+        if has_accounts:
+            allocation = {}
+            for account in account_service.get_accounts(self.conn):
+                allocation[account["name"]] = account["current_balance"]
+        else:
+            allocation = {
+                "存款": totals["deposits"],
+                "基金": invest["categories"].get("基金", {}).get("holding", 0),
+                "黄金": invest["categories"].get("黄金", {}).get("holding", 0),
+                "黄金账户": invest["categories"].get("黄金账户", {}).get("holding", 0),
+                "股票": invest["categories"].get("股票", {}).get("holding", 0),
+            }
+        if has_transactions:
+            for year in years:
+                summary = transaction_service.get_yearly_summary(
+                    self.conn, year["year"]
+                )
+                income_values = [
+                    transaction_service.get_monthly_summary(
+                        self.conn, year["year"], month
+                    )["income"]
+                    for month in range(1, 13)
+                ]
+                expense_values = [
+                    transaction_service.get_monthly_summary(
+                        self.conn, year["year"], month
+                    )["expense"]
+                    for month in range(1, 13)
+                ]
         signature = (
             tuple(categories),
             tuple(round(value, 2) for value in income_values),

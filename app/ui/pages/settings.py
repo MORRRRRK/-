@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from ...core import repository
 from ...core.paths import backups_dir, exports_dir
-from ...services import llm
+from ...services import llm, server_sync
 from ...services.release import DEFAULT_CODE_REPO
 from ...edition import is_customer
 from ..widgets import (
@@ -274,6 +274,40 @@ class SettingsPage(QScrollArea):
         cloud_section.add(cloud_note)
         layout.addWidget(cloud_section)
 
+        self.server_sync_save_button = make_button("保存互联设置", primary=True)
+        self.server_sync_save_button.clicked.connect(self._save_server_sync)
+        server_sync_section = Section(
+            "V4 手机互联（服务器同步）",
+            actions=[self.server_sync_save_button],
+        )
+        server_sync_grid = QGridLayout()
+        server_sync_grid.setHorizontalSpacing(24)
+        server_sync_grid.setVerticalSpacing(10)
+        server_sync_grid.addWidget(QLabel("同步服务地址"), 0, 0)
+        self.server_sync_url_edit = line_edit(
+            placeholder="如 http://192.168.2.128:8766"
+        )
+        server_sync_grid.addWidget(self.server_sync_url_edit, 0, 1, 1, 3)
+        server_sync_grid.addWidget(QLabel("服务器密码"), 1, 0)
+        self.server_sync_password_edit = QLineEdit()
+        self.server_sync_password_edit.setEchoMode(QLineEdit.Password)
+        server_sync_grid.addWidget(self.server_sync_password_edit, 1, 1, 1, 3)
+        self.server_sync_status_label = QLabel("未登录")
+        self.server_sync_status_label.setObjectName("summaryValue")
+        self.server_sync_status_label.setWordWrap(True)
+        server_sync_grid.addWidget(self.server_sync_status_label, 2, 0, 1, 4)
+        server_sync_buttons = QHBoxLayout()
+        self.server_sync_login_button = make_button("登录")
+        self.server_sync_button = make_button("立即同步", primary=True)
+        self.server_sync_login_button.clicked.connect(self._server_sync_login)
+        self.server_sync_button.clicked.connect(self._server_sync_run)
+        server_sync_buttons.addWidget(self.server_sync_login_button)
+        server_sync_buttons.addWidget(self.server_sync_button)
+        server_sync_buttons.addStretch(1)
+        server_sync_section.add_layout(server_sync_grid)
+        server_sync_section.add_layout(server_sync_buttons)
+        layout.addWidget(server_sync_section)
+
         cache_section = Section("缓存清理")
         cache_layout = QHBoxLayout()
         self.clear_cache_button = make_button("清除导出与备份缓存")
@@ -353,6 +387,11 @@ class SettingsPage(QScrollArea):
         self.cloud_startup_check.setChecked(
             repository.get_setting(self.conn, "cloud_sync_startup", "0") == "1"
         )
+        self.server_sync_url_edit.setText(
+            repository.get_setting(self.conn, "server_sync_url", "")
+        )
+        server_token = repository.get_setting(self.conn, "server_sync_token", "")
+        self.server_sync_status_label.setText("已登录" if server_token else "未登录")
         last_status = repository.get_setting(
             self.conn, "cloud_sync_last_status", ""
         )
@@ -392,6 +431,62 @@ class SettingsPage(QScrollArea):
         self.conn.commit()
         flash_saved(self.common_save_button)
         self.on_settings_changed()
+
+    def _save_server_sync(self) -> None:
+        repository.set_setting(
+            self.conn, "server_sync_url", self.server_sync_url_edit.text().strip()
+        )
+        self.conn.commit()
+        flash_saved(self.server_sync_save_button)
+
+    def _server_sync_client(self) -> server_sync.ServerClient:
+        url = self.server_sync_url_edit.text().strip()
+        token = repository.get_setting(self.conn, "server_sync_token", "")
+        if not url:
+            raise server_sync.ServerSyncError("请先填写同步服务地址")
+        return server_sync.ServerClient(url, token)
+
+    def _server_sync_login(self) -> None:
+        url = self.server_sync_url_edit.text().strip()
+        password = self.server_sync_password_edit.text()
+        if not url or not password:
+            QMessageBox.warning(self, "提示", "请先填写同步服务地址和密码")
+            return
+        try:
+            client = server_sync.ServerClient(url)
+            token = client.login(password)
+        except server_sync.ServerSyncError as exc:
+            QMessageBox.warning(self, "登录失败", str(exc))
+            return
+        repository.set_setting(self.conn, "server_sync_url", url)
+        repository.set_setting(self.conn, "server_sync_token", token)
+        self.conn.commit()
+        self.server_sync_status_label.setText("已登录")
+        QMessageBox.information(self, "登录成功", "已连接 V4 手机互联服务端")
+
+    def _server_sync_run(self) -> None:
+        try:
+            client = self._server_sync_client()
+        except server_sync.ServerSyncError as exc:
+            QMessageBox.warning(self, "提示", str(exc))
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            result = server_sync.sync_all(self.conn, client)
+        except server_sync.ServerSyncError as exc:
+            QMessageBox.warning(self, "同步失败", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.server_sync_status_label.setText(
+            f"同步完成：推送 {result['pushed']}，拉取 {result['pulled']}"
+        )
+        self.on_settings_changed()
+        QMessageBox.information(
+            self,
+            "同步完成",
+            f"推送 {result['pushed']} 条，拉取 {result['pulled']} 条。",
+        )
 
     def _save_llm(self) -> None:
         repository.set_setting(

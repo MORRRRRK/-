@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QAbstractSpinBox
 from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
+    QDialog,
     QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
@@ -15,6 +16,8 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
 )
+
+from ..services import account_service, category_service
 
 
 def money(value: float) -> str:
@@ -171,3 +174,120 @@ def line_edit(text: str = "", placeholder: str = "") -> QLineEdit:
     if placeholder:
         edit.setPlaceholderText(placeholder)
     return edit
+
+
+class TransactionDialog(QDialog):
+    """快速记账对话框：支出/收入/转账。"""
+
+    def __init__(self, conn, parent=None, transaction: dict | None = None):
+        super().__init__(parent)
+        self.conn = conn
+        self.transaction = transaction
+        self.setWindowTitle("编辑交易" if transaction else "快速记账")
+        self.setMinimumWidth(420)
+        layout = QVBoxLayout(self)
+
+        self.type_combo = QComboBox()
+        self.type_combo.addItem("支出", "expense")
+        self.type_combo.addItem("收入", "income")
+        self.type_combo.addItem("转账", "transfer")
+        if transaction:
+            index = self.type_combo.findData(transaction["type"])
+            self.type_combo.setCurrentIndex(max(0, index))
+        layout.addWidget(self.type_combo)
+
+        self.amount_spin = make_money_spin(
+            float(transaction["amount"]) if transaction else 0.0, 0.0, 1e8
+        )
+        layout.addWidget(QLabel("金额"))
+        layout.addWidget(self.amount_spin)
+
+        self.category_combo = QComboBox()
+        self._reload_categories()
+        layout.addWidget(QLabel("分类"))
+        layout.addWidget(self.category_combo)
+
+        self.account_combo = QComboBox()
+        self.to_account_combo = QComboBox()
+        self._reload_accounts()
+        layout.addWidget(QLabel("账户"))
+        layout.addWidget(self.account_combo)
+        layout.addWidget(QLabel("转入账户"))
+        layout.addWidget(self.to_account_combo)
+
+        self.date_edit = QDateEdit()
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        layout.addWidget(QLabel("日期"))
+        layout.addWidget(self.date_edit)
+
+        self.merchant_edit = line_edit(transaction["merchant"] if transaction else "", "商家")
+        self.note_edit = line_edit(transaction["note"] if transaction else "", "备注")
+        self.reimbursable_check = QCheckBox("可报销")
+        if transaction:
+            self.reimbursable_check.setChecked(bool(transaction["is_reimbursable"]))
+        layout.addWidget(self.merchant_edit)
+        layout.addWidget(self.note_edit)
+        layout.addWidget(self.reimbursable_check)
+
+        buttons = QHBoxLayout()
+        ok = make_button("保存", primary=True)
+        cancel = make_button("取消")
+        ok.clicked.connect(self._accept)
+        cancel.clicked.connect(self.reject)
+        buttons.addStretch(1)
+        buttons.addWidget(ok)
+        buttons.addWidget(cancel)
+        layout.addLayout(buttons)
+
+    def _reload_categories(self) -> None:
+        self.category_combo.clear()
+        self.category_combo.addItem("无", 0)
+        categories = category_service.get_categories(self.conn)
+
+        def walk(items, prefix=""):
+            for item in items:
+                self.category_combo.addItem(prefix + item["name"], item["id"])
+                walk(item.get("children") or [], prefix + "  ")
+
+        walk(categories)
+        if self.transaction and self.transaction.get("category_id"):
+            index = self.category_combo.findData(self.transaction["category_id"])
+            self.category_combo.setCurrentIndex(max(0, index))
+
+    def _reload_accounts(self) -> None:
+        accounts = account_service.get_accounts(self.conn)
+        for combo in (self.account_combo, self.to_account_combo):
+            combo.clear()
+            for account in accounts:
+                combo.addItem(account["name"], account["id"])
+        if self.transaction:
+            index = self.account_combo.findData(self.transaction["account_id"])
+            self.account_combo.setCurrentIndex(max(0, index))
+            if self.transaction.get("to_account_id"):
+                index = self.to_account_combo.findData(self.transaction["to_account_id"])
+                self.to_account_combo.setCurrentIndex(max(0, index))
+
+    def _accept(self) -> None:
+        if float(self.amount_spin.value()) <= 0:
+            QMessageBox.warning(self, "提示", "金额必须大于 0")
+            return
+        if self.type_combo.currentData() == "transfer" and (
+            self.account_combo.currentData() == self.to_account_combo.currentData()
+        ):
+            QMessageBox.warning(self, "提示", "转出和转入账户不能相同")
+            return
+        self.accept()
+
+    def values(self) -> dict:
+        return {
+            "trans_date": self.date_edit.date().toString("yyyy-MM-dd"),
+            "trans_type": self.type_combo.currentData(),
+            "amount": float(self.amount_spin.value()),
+            "category_id": self.category_combo.currentData() or None,
+            "account_id": self.account_combo.currentData(),
+            "to_account_id": self.to_account_combo.currentData(),
+            "merchant": self.merchant_edit.text().strip(),
+            "note": self.note_edit.text().strip(),
+            "is_reimbursable": 1 if self.reimbursable_check.isChecked() else 0,
+        }

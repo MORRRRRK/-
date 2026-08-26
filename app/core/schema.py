@@ -1,4 +1,4 @@
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS years (
@@ -153,6 +153,57 @@ CREATE TABLE IF NOT EXISTS gold_accounts (
   note TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK(type IN ('cash','bank','alipay','wechat','investment','credit_card','loan','other')),
+  institution TEXT NOT NULL DEFAULT '',
+  initial_balance REAL NOT NULL DEFAULT 0,
+  current_balance REAL NOT NULL DEFAULT 0,
+  is_liability INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS transaction_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK(type IN ('expense','income')),
+  parent_id INTEGER,
+  icon TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_system INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  trans_date TEXT NOT NULL,
+  type TEXT NOT NULL CHECK(type IN ('expense','income','transfer')),
+  amount REAL NOT NULL DEFAULT 0,
+  category_id INTEGER REFERENCES transaction_categories(id),
+  account_id INTEGER NOT NULL REFERENCES accounts(id),
+  to_account_id INTEGER REFERENCES accounts(id),
+  merchant TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  image_path TEXT NOT NULL DEFAULT '',
+  is_reimbursable INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS holding_transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  holding_id INTEGER NOT NULL REFERENCES holdings(id) ON DELETE CASCADE,
+  trans_type TEXT NOT NULL CHECK(trans_type IN ('buy','sell','dividend','subscription','redemption')),
+  trans_date TEXT NOT NULL,
+  shares REAL NOT NULL DEFAULT 0,
+  price REAL NOT NULL DEFAULT 0,
+  amount REAL NOT NULL DEFAULT 0,
+  fee REAL NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS goals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -199,6 +250,11 @@ CREATE INDEX IF NOT EXISTS idx_invest_executions_holding ON invest_executions(ho
 CREATE INDEX IF NOT EXISTS idx_gold_accounts_channel ON gold_accounts(channel);
 CREATE INDEX IF NOT EXISTS idx_pension_jobs_end_year ON pension_jobs(end_year);
 CREATE INDEX IF NOT EXISTS idx_ai_reports_created ON ai_reports(created_at);
+CREATE INDEX IF NOT EXISTS idx_trans_date ON transactions(trans_date);
+CREATE INDEX IF NOT EXISTS idx_trans_account ON transactions(account_id);
+CREATE INDEX IF NOT EXISTS idx_trans_category ON transactions(category_id);
+CREATE INDEX IF NOT EXISTS idx_holding_trans_holding ON holding_transactions(holding_id);
+CREATE INDEX IF NOT EXISTS idx_holding_trans_date ON holding_transactions(trans_date);
 """
 
 
@@ -208,8 +264,48 @@ def apply_schema(conn) -> None:
     _backfill_salary_coefficients(conn)
     _migrate_utilities_to_expense(conn)
     seed_insurance_items(conn)
+    _seed_categories(conn)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
+
+
+def _seed_categories(conn) -> None:
+    """初始化内置交易分类，仅在分类表为空时执行。"""
+    if conn.execute("SELECT 1 FROM transaction_categories LIMIT 1").fetchone():
+        return
+    defaults = [
+        ("餐饮", "expense", ["正餐", "外卖", "零食", "饮料"]),
+        ("交通", "expense", ["公交地铁", "打车", "加油", "停车", "高铁机票"]),
+        ("购物", "expense", ["服饰", "数码", "家居", "日用"]),
+        ("居住", "expense", ["房租", "水电燃气", "物业", "维修"]),
+        ("娱乐", "expense", ["电影", "游戏", "旅游", "运动"]),
+        ("医疗", "expense", ["门诊", "药品", "体检", "保险"]),
+        ("教育", "expense", ["培训", "书籍", "会员"]),
+        ("通讯", "expense", ["话费", "流量", "宽带"]),
+        ("人情", "expense", ["红包", "礼物", "请客"]),
+        ("其他支出", "expense", []),
+        ("工资", "income", ["基本工资", "奖金", "补贴", "年终奖"]),
+        ("投资收益", "income", ["基金", "股票", "黄金", "利息"]),
+        ("兼职副业", "income", []),
+        ("报销", "income", []),
+        ("红包礼金", "income", []),
+        ("其他收入", "income", []),
+    ]
+    order = 0
+    for name, trans_type, children in defaults:
+        order += 1
+        parent = conn.execute(
+            "INSERT INTO transaction_categories(name, type, sort_order, is_system) "
+            "VALUES (?, ?, ?, 1)",
+            (name, trans_type, order),
+        ).lastrowid
+        for child in children:
+            order += 1
+            conn.execute(
+                "INSERT INTO transaction_categories"
+                "(name, type, parent_id, sort_order, is_system) VALUES (?, ?, ?, ?, 1)",
+                (child, trans_type, parent, order),
+            )
 
 
 def _ensure_columns(conn) -> None:

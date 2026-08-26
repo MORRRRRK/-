@@ -7,9 +7,14 @@ from PySide6.QtWidgets import (
     QApplication,
     QAbstractScrollArea,
     QComboBox,
+    QDateEdit,
+    QDialog,
+    QDoubleSpinBox,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QScrollArea,
     QTableWidget,
@@ -24,6 +29,7 @@ from ...services import calculations
 from ...services.eastmoney import EastMoneyError, search_fund
 from ...services.gold import GoldPriceError, fetch_gold_price
 from ...services.investing import run_scheduled_investments
+from ...services import investing
 from ...services.market import MarketClient, MarketError, fetch_live_price
 from ..widgets import (
     Section,
@@ -117,6 +123,7 @@ class HoldingsPage(QScrollArea):
         self.undo_button = make_button("撤销删除")
         self.resolve_button = make_button("按名称解析代码")
         self.refresh_button = make_button("刷新实时行情")
+        self.history_button = make_button("查看交易")
         self.save_button = make_button("保存修改", primary=True)
         self.save_button.setMinimumSize(150, 42)
         self.add_row_button.clicked.connect(self._add_row)
@@ -124,6 +131,7 @@ class HoldingsPage(QScrollArea):
         self.undo_button.clicked.connect(self._undo_delete)
         self.resolve_button.clicked.connect(self._resolve_symbol)
         self.refresh_button.clicked.connect(lambda: self._refresh_market(show_popup=True))
+        self.history_button.clicked.connect(self._show_history)
         self.save_button.clicked.connect(self._save_all)
         for button in (
             self.add_row_button,
@@ -131,6 +139,7 @@ class HoldingsPage(QScrollArea):
             self.undo_button,
             self.resolve_button,
             self.refresh_button,
+            self.history_button,
         ):
             action_row.addWidget(button)
         action_row.addStretch(1)
@@ -740,6 +749,16 @@ class HoldingsPage(QScrollArea):
                 message += "\n\n失败：\n" + "\n".join(failed[:10])
             QMessageBox.information(self, "实时行情", message)
 
+    def _show_history(self) -> None:
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self._row_ids) or self._row_ids[row] is None:
+            QMessageBox.information(self, "提示", "请先选择一行已保存的持仓")
+            return
+        dialog = HoldingTransactionDialog(
+            self.conn, self._row_ids[row], self.refresh, self
+        )
+        dialog.exec()
+
 def _format_decimal(value, decimals: int = 2) -> str:
     if value is None or value == "":
         return ""
@@ -764,3 +783,176 @@ def _asset_type_from_candidate(asset_type: str) -> str:
     if asset_type in ("fund-otc", "fund-reits"):
         return "fund_otc"
     return ""
+
+
+class HoldingTransactionDialog(QDialog):
+    """持仓交易历史：买入/卖出/分红/定投/赎回。"""
+
+    def __init__(self, conn, holding_id: int, on_changed, parent=None):
+        super().__init__(parent)
+        self.conn = conn
+        self.holding_id = holding_id
+        self.on_changed = on_changed
+        self._ids: list[int] = []
+        self.setWindowTitle("持仓交易历史")
+        self.resize(760, 480)
+        layout = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        self.add_buy = make_button("买入/定投", primary=True)
+        self.add_sell = make_button("卖出/赎回")
+        self.add_dividend = make_button("分红")
+        self.delete_button = make_button("删除")
+        self.add_buy.clicked.connect(lambda: self._add("buy"))
+        self.add_sell.clicked.connect(lambda: self._add("sell"))
+        self.add_dividend.clicked.connect(lambda: self._add("dividend"))
+        self.delete_button.clicked.connect(self._delete)
+        for button in (self.add_buy, self.add_sell, self.add_dividend, self.delete_button):
+            top.addWidget(button)
+        top.addStretch(1)
+        layout.addLayout(top)
+
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(
+            ["日期", "类型", "份额", "价格", "金额", "手续费", "备注"]
+        )
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self.table)
+
+        self.summary_label = QLabel("")
+        self.summary_label.setObjectName("summaryValue")
+        layout.addWidget(self.summary_label)
+        self._reload()
+
+    def _reload(self) -> None:
+        rows = investing.get_holding_transactions(self.conn, self.holding_id)
+        self._ids = [row["id"] for row in rows]
+        self.table.setRowCount(len(rows))
+        type_names = {
+            "buy": "买入", "sell": "卖出", "dividend": "分红",
+            "subscription": "定投", "redemption": "赎回",
+        }
+        for r, row in enumerate(rows):
+            values = [
+                row["trans_date"],
+                type_names.get(row["trans_type"], row["trans_type"]),
+                f"{float(row['shares'] or 0):.4f}",
+                f"{float(row['price'] or 0):.4f}",
+                f"{float(row['amount'] or 0):.2f}",
+                f"{float(row['fee'] or 0):.2f}",
+                row["note"],
+            ]
+            for c, text in enumerate(values):
+                item = QTableWidgetItem(str(text))
+                item.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(r, c, item)
+        holding = None
+        for item in repository.list_holdings(self.conn):
+            if item["id"] == self.holding_id:
+                holding = item
+                break
+        if holding:
+            value = float(holding.get("holding_value") or 0)
+            cost = float(holding.get("cost_basis") or 0)
+            profit = float(holding.get("cumulative_profit") or 0)
+            self.summary_label.setText(
+                f"总市值 {money(value)}  总成本 {money(cost)}  "
+                f"累计收益 {money(profit)}  XIRR/简单收益率 {pct(investing.calculate_xirr(self.conn, self.holding_id))}"
+            )
+
+    def _add(self, trans_type: str) -> None:
+        dialog = HoldingTradeDialog(self.conn, self.holding_id, trans_type, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        investing.add_holding_transaction(self.conn, self.holding_id, **dialog.values())
+        self.conn.commit()
+        self._reload()
+        self.on_changed()
+
+    def _delete(self) -> None:
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self._ids):
+            return
+        if not confirm_delete(self, "删除交易", "确定删除选中的持仓交易？"):
+            return
+        investing.delete_holding_transaction(self.conn, self._ids[row])
+        self.conn.commit()
+        self._reload()
+        self.on_changed()
+
+
+class HoldingTradeDialog(QDialog):
+    def __init__(self, conn, holding_id, trans_type, parent=None):
+        super().__init__(parent)
+        self.conn = conn
+        self.holding_id = holding_id
+        self.setWindowTitle("新增持仓交易")
+        self.setMinimumWidth(360)
+        layout = QGridLayout(self)
+        self.type_combo = QComboBox()
+        for label, value in [
+            ("买入", "buy"), ("卖出", "sell"), ("分红", "dividend"),
+            ("定投", "subscription"), ("赎回", "redemption"),
+        ]:
+            self.type_combo.addItem(label, value)
+        index = self.type_combo.findData(trans_type)
+        self.type_combo.setCurrentIndex(max(0, index))
+        self.date_edit = QDateEdit()
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.shares_spin = QDoubleSpinBox()
+        self.shares_spin.setDecimals(4)
+        self.shares_spin.setRange(0, 1e9)
+        self.price_spin = QDoubleSpinBox()
+        self.price_spin.setDecimals(4)
+        self.price_spin.setRange(0, 1e9)
+        self.amount_spin = QDoubleSpinBox()
+        self.amount_spin.setDecimals(2)
+        self.amount_spin.setRange(0, 1e9)
+        self.fee_spin = QDoubleSpinBox()
+        self.fee_spin.setDecimals(2)
+        self.fee_spin.setRange(0, 1e9)
+        self.note_edit = QLineEdit()
+        fields = [
+            ("类型", self.type_combo),
+            ("日期", self.date_edit),
+            ("份额", self.shares_spin),
+            ("价格", self.price_spin),
+            ("金额", self.amount_spin),
+            ("手续费", self.fee_spin),
+            ("备注", self.note_edit),
+        ]
+        for row, (title, widget) in enumerate(fields):
+            label = QLabel(title)
+            label.setObjectName("fieldLabel")
+            layout.addWidget(label, row, 0)
+            layout.addWidget(widget, row, 1)
+        buttons = QHBoxLayout()
+        ok = make_button("确定", primary=True)
+        cancel = make_button("取消")
+        ok.clicked.connect(self._accept)
+        cancel.clicked.connect(self.reject)
+        buttons.addStretch(1)
+        buttons.addWidget(ok)
+        buttons.addWidget(cancel)
+        layout.addLayout(buttons, len(fields), 0, 1, 2)
+
+    def _accept(self) -> None:
+        if self.amount_spin.value() <= 0:
+            self.amount_spin.setValue(round(self.shares_spin.value() * self.price_spin.value(), 2))
+        if self.amount_spin.value() <= 0:
+            QMessageBox.warning(self, "提示", "金额必须大于 0")
+            return
+        self.accept()
+
+    def values(self) -> dict:
+        return {
+            "trans_type": self.type_combo.currentData(),
+            "trans_date": self.date_edit.date().toString("yyyy-MM-dd"),
+            "shares": float(self.shares_spin.value()),
+            "price": float(self.price_spin.value()),
+            "amount": float(self.amount_spin.value()),
+            "fee": float(self.fee_spin.value()),
+            "note": self.note_edit.text().strip(),
+        }

@@ -81,6 +81,18 @@ class MonthlyPage(QScrollArea):
         top.addStretch(1)
         layout.addLayout(top)
 
+        self._has_transactions = bool(
+            self.conn.execute("SELECT 1 FROM transactions LIMIT 1").fetchone()
+        )
+        if self._has_transactions:
+            notice = QLabel(
+                "已启用日常记账，本页为历史汇总只读视图；"
+                "新增和修改请到“记账流水”页面。"
+            )
+            notice.setObjectName("fieldLabel")
+            notice.setWordWrap(True)
+            layout.addWidget(notice)
+
         summary_actions = []
         if self._formula_enabled:
             summary_actions.append(
@@ -114,6 +126,8 @@ class MonthlyPage(QScrollArea):
 
         self.monthly_save_button = make_button("保存月度流水", primary=True)
         self.monthly_save_button.clicked.connect(self._save_monthly)
+        if self._has_transactions:
+            self.monthly_save_button.setEnabled(False)
         monthly_section = Section(
             "月度流水（收入 / 住房 / 存款，双击图片备注可预览）",
             actions=[self.monthly_save_button],
@@ -326,6 +340,11 @@ class MonthlyPage(QScrollArea):
         return records
 
     def _save_monthly(self) -> None:
+        if self._has_transactions:
+            QMessageBox.information(
+                self, "只读", "已启用日常记账，请到“记账流水”页面编辑。"
+            )
+            return
         year_id = self._current_year_id()
         repository.upsert_monthly_records(self.conn, year_id, self._records_from_table())
         self.conn.commit()

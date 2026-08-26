@@ -60,3 +60,37 @@ def export_csv(conn: sqlite3.Connection, exports_dir: Path) -> list[Path]:
             writer.writerows(rows)
         written.append(path)
     return written
+
+
+def export_transactions(
+    conn: sqlite3.Connection, start_date: str, end_date: str, file_path: Path
+) -> Path:
+    """导出指定日期范围内的交易记录为 CSV。"""
+    from . import transaction_service
+
+    rows = transaction_service.get_transactions(conn, start_date, end_date)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with file_path.open("w", newline="", encoding="utf-8-sig") as fh:
+        if not rows:
+            fh.write("")
+            return file_path
+        writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    return file_path
+
+
+def export_accounts(conn: sqlite3.Connection, file_path: Path) -> Path:
+    """导出账户列表为 CSV。"""
+    from . import account_service
+
+    rows = account_service.get_accounts(conn)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with file_path.open("w", newline="", encoding="utf-8-sig") as fh:
+        if not rows:
+            fh.write("")
+            return file_path
+        writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    return file_path

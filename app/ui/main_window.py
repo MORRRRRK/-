@@ -31,6 +31,7 @@ from ..services.importer import MigrationError, import_xlsx
 from .update_worker import UpdateCheckWorker, UpdateInstallWorker
 from .sync_worker import CloudSyncWorker
 from .pages.about import AboutPage
+from .pages.accounts import AccountsPage
 from .pages.holdings import HoldingsPage
 from .pages.insurance import InsurancePage
 from .pages.monthly import MonthlyPage
@@ -38,6 +39,7 @@ from .pages.overview import OverviewPage
 from .pages.planning import PlanningPage
 from .pages.reports import ReportsPage
 from .pages.settings import SettingsPage
+from .pages.transactions import TransactionsPage
 from .theme import apply_theme
 
 
@@ -77,13 +79,15 @@ class MainWindow(QMainWindow):
         self.nav.setFixedWidth(168)
         for name in [
             "资产总览",
-            "开支管理",
+            "记账流水",
+            "账户管理",
             "工资管理",
             "持仓管理",
             "资产规划",
             "智能报告",
             "设置",
             "关于",
+            "历史汇总",
         ]:
             self.nav.addItem(name)
         self.nav.currentRowChanged.connect(self._switch_page)
@@ -96,13 +100,15 @@ class MainWindow(QMainWindow):
         self.about_page = AboutPage(self.db.conn, self._check_update)
         self.pages = [
             OverviewPage(self.db.conn),
-            MonthlyPage(self.db.conn, self.refresh_all),
+            TransactionsPage(self.db.conn, self.refresh_all),
+            AccountsPage(self.db.conn, self.refresh_all),
             InsurancePage(self.db.conn, self.refresh_all),
             HoldingsPage(self.db.conn, self.refresh_all),
             PlanningPage(self.db.conn, self.refresh_all),
             self.reports_page,
             self.settings_page,
             self.about_page,
+            MonthlyPage(self.db.conn, self.refresh_all),
         ]
         for page in self.pages:
             self.stack.addWidget(page)

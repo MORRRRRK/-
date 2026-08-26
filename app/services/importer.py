@@ -41,6 +41,49 @@ def _rate(text: str) -> float:
     return float(match.group(1)) / 100.0 if match else 0.0
 
 
+def import_transactions_csv(conn: sqlite3.Connection, file_path: Path) -> int:
+    """通用 CSV 导入交易，表头需包含 trans_date/type/amount/account_id。"""
+    import csv
+
+    from . import transaction_service
+
+    count = 0
+    with file_path.open("r", encoding="utf-8-sig") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            account_id = row.get("account_id") or row.get("账户ID")
+            if not account_id:
+                continue
+            trans_type = row.get("type") or row.get("类型")
+            amount = _num(row.get("amount") or row.get("金额"))
+            if not trans_type or amount <= 0:
+                continue
+            transaction_service.add_transaction(
+                conn,
+                trans_date=row.get("trans_date") or row.get("日期") or "",
+                trans_type=trans_type,
+                amount=amount,
+                category_id=int(row["category_id"]) if row.get("category_id") else None,
+                account_id=int(account_id),
+                to_account_id=int(row["to_account_id"]) if row.get("to_account_id") else None,
+                merchant=row.get("merchant") or row.get("商家") or "",
+                note=row.get("note") or row.get("备注") or "",
+            )
+            count += 1
+    conn.commit()
+    return count
+
+
+def import_alipay_bill(conn: sqlite3.Connection, file_path: Path) -> int:
+    """支付宝账单 CSV 导入（TODO：解析逻辑后续完善，先走通用导入）。"""
+    return import_transactions_csv(conn, file_path)
+
+
+def import_wechat_bill(conn: sqlite3.Connection, file_path: Path) -> int:
+    """微信账单 CSV 导入（TODO：解析逻辑后续完善，先走通用导入）。"""
+    return import_transactions_csv(conn, file_path)
+
+
 def _parse_monthly_sheet(ws) -> list[dict[str, Any]]:
     def header_texts(row_number: int) -> dict[int, str]:
         texts = {}

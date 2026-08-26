@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>账户管理</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="header"><h1>账户管理</h1></div>
+  <div class="list" id="accounts"></div>
+  <form>
+    <label>账户名称</label><input id="name" placeholder="如 现金">
+    <label>类型</label>
+    <select id="type">
+      <option value="cash">现金</option>
+      <option value="bank">银行卡</option>
+      <option value="alipay">支付宝</option>
+      <option value="wechat">微信</option>
+      <option value="investment">投资账户</option>
+      <option value="credit_card">信用卡</option>
+      <option value="loan">贷款</option>
+      <option value="other">其他</option>
+    </select>
+    <label>初始余额</label><input id="balance" type="number" step="0.01" value="0">
+    <button class="primary" type="button" onclick="add()">新增账户</button>
+  </form>
+  <nav class="bottom">
+    <a href="index.html">首页</a>
+    <a href="transactions.html">记账</a>
+    <a href="accounts.html">账户</a>
+  </nav>
+  <script src="app.js"></script>
+  <script>
+    navActive();
+    async function load() {
+      await requireAccess();
+      const accounts = await api('/api/accounts');
+      document.getElementById('accounts').innerHTML = accounts.map(a =>
+        `<div class="item"><span>${a.name}<br><small>${a.type}</small></span><b>${money(a.current_balance)}</b></div>`
+      ).join('') || '<p>暂无账户</p>';
+    }
+    async function add() {
+      await api('/api/accounts', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: document.getElementById('name').value,
+          type: document.getElementById('type').value,
+          initial_balance: Number(document.getElementById('balance').value) || 0,
+          is_liability: ['credit_card','loan'].includes(document.getElementById('type').value)
+        })
+      });
+      await load();
+    }
+    load();
+  </script>
+</body>
+</html>

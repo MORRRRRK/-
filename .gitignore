@@ -11,3 +11,4 @@ dist_v32/
 releases/
 edition.ini
 *.spec
+finance-server/*.db

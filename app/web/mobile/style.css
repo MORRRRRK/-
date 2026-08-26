@@ -1,0 +1,40 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #f5f7fa;
+  color: #1e293b;
+  padding-bottom: 64px;
+}
+.header { background: #1976d2; color: #fff; padding: 16px; text-align: center; }
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 12px; }
+.card { background: #fff; border-radius: 8px; padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.card h4 { font-size: 12px; color: #64748b; }
+.card b { font-size: 16px; }
+.list { padding: 12px; }
+.item { background: #fff; border-radius: 8px; padding: 10px; margin-bottom: 8px; display: flex; justify-content: space-between; }
+.income { color: #16a34a; }
+.expense { color: #dc2626; }
+nav.bottom {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  display: flex; background: #fff; border-top: 1px solid #e2e8f0;
+}
+nav.bottom a { flex: 1; text-align: center; padding: 10px 0; color: #64748b; text-decoration: none; font-size: 13px; }
+nav.bottom a.active { color: #1976d2; font-weight: 600; }
+.fab {
+  position: fixed; right: 16px; bottom: 76px; width: 56px; height: 56px;
+  border-radius: 50%; background: #1976d2; color: #fff; border: none;
+  font-size: 28px; box-shadow: 0 4px 10px rgba(0,0,0,.25); z-index: 9;
+}
+form { padding: 12px; }
+label { display: block; margin: 10px 0 4px; font-size: 13px; color: #475569; }
+input, select, textarea {
+  width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px;
+  font-size: 15px;
+}
+button.primary {
+  width: 100%; margin-top: 16px; padding: 12px; background: #1976d2;
+  color: #fff; border: none; border-radius: 8px; font-size: 16px;
+}
+.type-group { display: flex; gap: 8px; margin: 12px 0; }
+.type-group button { flex: 1; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+.type-group button.active { background: #1976d2; color: #fff; border-color: #1976d2; }

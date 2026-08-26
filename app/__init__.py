@@ -1,3 +1,3 @@
-"""个人财务软件 V3.5.1。"""
-__version__ = "3.5.1"
-VERSION_LABEL = "V3.5.1"
+"""个人财务软件 V4.2。"""
+__version__ = "4.2.0"
+VERSION_LABEL = "V4.2"

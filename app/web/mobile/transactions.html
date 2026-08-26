@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>交易记录</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="header"><h1>交易记录</h1></div>
+  <div class="list">
+    <select id="type">
+      <option value="">全部类型</option>
+      <option value="expense">支出</option>
+      <option value="income">收入</option>
+      <option value="transfer">转账</option>
+    </select>
+    <select id="account"></select>
+    <input id="keyword" placeholder="搜索商家/备注">
+    <button class="primary" onclick="load()">查询</button>
+    <div id="items"></div>
+  </div>
+  <a class="fab" href="add.html">+</a>
+  <nav class="bottom">
+    <a href="index.html">首页</a>
+    <a href="transactions.html">记账</a>
+    <a href="accounts.html">账户</a>
+  </nav>
+  <script src="app.js"></script>
+  <script>
+    navActive();
+    async function load() {
+      await requireAccess();
+      const account = document.getElementById('account').value;
+      const type = document.getElementById('type').value;
+      const keyword = document.getElementById('keyword').value;
+      const q = new URLSearchParams();
+      if (account) q.set('account_id', account);
+      if (type) q.set('type', type);
+      if (keyword) q.set('keyword', keyword);
+      const tx = await api('/api/transactions?' + q.toString());
+      document.getElementById('items').innerHTML = (tx.transactions||[]).map(t =>
+        `<div class="item"><span>${t.trans_date} ${t.merchant||''}<br><small>${typeText(t.type)}</small></span>${amountHtml(t.type,t.amount)}</div>`
+      ).join('') || '<p>暂无交易</p>';
+    }
+    (async () => {
+      const accounts = await api('/api/accounts');
+      document.getElementById('account').innerHTML = '<option value="">全部账户</option>' +
+        accounts.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+      await load();
+    })();
+  </script>
+</body>
+</html>

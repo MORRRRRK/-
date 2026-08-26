@@ -12,6 +12,29 @@ def _row_many(conn: sqlite3.Connection, sql: str) -> list[dict[str, Any]]:
 
 
 def year_summary(conn: sqlite3.Connection, year_id: int) -> dict[str, Any]:
+    year_row = conn.execute(
+        "SELECT year FROM years WHERE id = ?", (year_id,)
+    ).fetchone()
+    year = int(year_row["year"]) if year_row else 0
+    trans_count = conn.execute(
+        "SELECT COUNT(*) FROM transactions WHERE trans_date LIKE ?",
+        (f"{year}%",),
+    ).fetchone()[0]
+    has_transactions = trans_count > 0
+    if has_transactions:
+        trans_rows = conn.execute(
+            """
+            SELECT type, amount FROM transactions
+            WHERE trans_date LIKE ?
+            """,
+            (f"{year}%",),
+        ).fetchall()
+        trans_income = sum(
+            float(r["amount"] or 0) for r in trans_rows if r["type"] == "income"
+        )
+        trans_expense = sum(
+            float(r["amount"] or 0) for r in trans_rows if r["type"] == "expense"
+        )
     row = conn.execute(
         """
         SELECT
@@ -40,7 +63,12 @@ def year_summary(conn: sqlite3.Connection, year_id: int) -> dict[str, Any]:
     housing_cost = float(row["housing_cost"])
     monthly_expense = float(row["monthly_expense"])
     deposits = float(row["deposits"])
-    balance = income + housing_cost
+    if has_transactions:
+        income = trans_income
+        monthly_expense = trans_expense
+        balance = trans_income - trans_expense
+    else:
+        balance = income + housing_cost
     return {
         "salary": salary,
         "income": income,
