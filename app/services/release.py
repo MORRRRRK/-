@@ -10,6 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 from ..core.paths import app_root
@@ -63,8 +64,22 @@ def customer_build_dir() -> Path:
 
 
 def build_customer() -> None:
-    """在项目目录执行 PyInstaller 构建客户版（无交互）。"""
+    """在项目目录执行 PyInstaller 构建客户版（无交互）。
+
+    构建前会自动关闭从 dist\\财务软件客户版 启动的进程，并把旧目录连同
+    data/backups/exports 移到 dist_backup，构建后再还原数据目录，
+    确保客户版本地测试数据不会因重新构建被清除。
+    """
     source_root, _, _, _ = _project_layout()
+    customer_app = source_root / "dist" / "财务软件客户版"
+    backup_dir = source_root / "dist_backup"
+    backup_path: Path | None = None
+    if customer_app.exists():
+        _stop_customer_processes(customer_app)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = backup_dir / f"财务软件客户版_{stamp}"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(customer_app), str(backup_path))
     python_exe = source_root / ".venv" / "Scripts" / "python.exe"
     if not python_exe.exists():
         python_exe = Path(sys.executable)
@@ -111,7 +126,6 @@ def build_customer() -> None:
         if result.returncode != 0:
             tail = (result.stdout or "")[-800:] + (result.stderr or "")[-800:]
             raise RuntimeError("客户版构建失败：\n" + tail)
-    customer_app = source_root / "dist" / "财务软件客户版"
     customer_app.mkdir(parents=True, exist_ok=True)
     (customer_app / "edition.ini").write_text("customer\n", encoding="ascii")
     shutil.copy2(
@@ -120,6 +134,27 @@ def build_customer() -> None:
     )
     (customer_app / "update_config.ini").write_text(
         "repo=MORRRRRK/finance-releases\n", encoding="ascii"
+    )
+    if backup_path is not None and backup_path.exists():
+        for folder in ("data", "backups", "exports"):
+            source = backup_path / folder
+            if source.exists():
+                shutil.copytree(source, customer_app / folder, dirs_exist_ok=True)
+
+
+def _stop_customer_processes(customer_app: Path) -> None:
+    """关闭从指定客户版目录启动的进程，避免构建时文件被占用。"""
+    escaped = str(customer_app).replace("'", "''")
+    command = (
+        "Get-Process | Where-Object { $_.Path -like '"
+        + escaped
+        + "*' } | Stop-Process -Force -ErrorAction SilentlyContinue"
+    )
+    subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command", command],
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        timeout=30,
+        check=False,
     )
 
 

@@ -5,6 +5,7 @@ data/
 exports/
 backups/
 dist/
+dist_backup/
 build/
 build_v32/
 dist_v32/
