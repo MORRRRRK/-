@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import secrets
 import sys
@@ -19,10 +20,10 @@ app = FastAPI(title="个人财务 V4 同步服务", version="0.1.0")
 
 SERVER_PASSWORD = os.environ.get("FINANCE_SERVER_PASSWORD", "finance-v4")
 SERVER_PORT = 8766  # 固定端口，后续版本保持 8766，避免客户端反复改配置
-APP_VERSION = "4.2.0"
+APP_VERSION = "4.3.0"
 APP_NOTES = (
-    "V4.2：新增账户管理、日常逐笔记账、持仓交易历史；"
-    "局域网 PWA 手机记账；桌面与手机版本统一为 V4.2。"
+    "V4.3：新增账号注册/登录、BlueCoins 联动导入、历史记录删除、"
+    "年份筛选修复、手机端远程 APK 更新；版本统一为 V4.3。"
 )
 APK_URL = os.environ.get("FINANCE_APK_URL", "")
 
@@ -125,6 +126,35 @@ class ReportRequest(BaseModel):
     period_label: str = "2026 年"
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def _hash_password(password: str) -> str:
+    salt = os.urandom(16).hex()
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), bytes.fromhex(salt), 200_000
+    ).hex()
+    return f"{salt}${digest}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        salt, digest = stored.split("$", 1)
+    except ValueError:
+        return False
+    candidate = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), bytes.fromhex(salt), 200_000
+    ).hex()
+    return candidate == digest
+
+
 def require_token(authorization: str | None = Header(default=None)) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="缺少 Token")
@@ -154,6 +184,36 @@ def create_token(req: TokenRequest) -> dict:
     finally:
         conn.close()
     return {"token": token}
+
+
+@app.post("/api/v1/auth/register")
+def register(req: RegisterRequest) -> dict:
+    username = req.username.strip()
+    if len(username) < 2 or len(req.password) < 6:
+        raise HTTPException(status_code=400, detail="用户名至少 2 位，密码至少 6 位")
+    conn = db.get_conn()
+    try:
+        if db.get_user(conn, username):
+            raise HTTPException(status_code=409, detail="用户名已存在")
+        db.add_user(conn, username, _hash_password(req.password))
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/v1/auth/login")
+def login(req: LoginRequest) -> dict:
+    username = req.username.strip()
+    conn = db.get_conn()
+    try:
+        user = db.get_user(conn, username)
+        if not user or not _verify_password(req.password, user["password_hash"]):
+            raise HTTPException(status_code=401, detail="用户名或密码错误")
+        token = secrets.token_hex(16)
+        db.register_token(conn, token)
+    finally:
+        conn.close()
+    return {"token": token, "username": username}
 
 
 @app.get("/api/v1/sync/snapshot")

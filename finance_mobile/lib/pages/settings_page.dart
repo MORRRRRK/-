@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../db/database.dart';
 import '../services/api.dart';
@@ -14,6 +15,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final _serverController = TextEditingController();
+  final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _busy = false;
   String _status = '未登录';
@@ -36,13 +38,37 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _login() async {
     setState(() => _busy = true);
     try {
-      final token = await ApiClient.login(_serverController.text, _passwordController.text);
+      final username = _usernameController.text.trim();
+      final token = username.isEmpty
+          ? await ApiClient.login(_serverController.text, _passwordController.text)
+          : await ApiClient.loginUser(
+              _serverController.text, username, _passwordController.text);
       await LocalDb.setMeta('server_url', _serverController.text.trim().replaceAll(RegExp(r'/$'), ''));
       await LocalDb.setMeta('token', token);
       _status = '已登录';
       _toast('登录成功');
     } catch (e) {
       _toast('登录失败：$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _register() async {
+    setState(() => _busy = true);
+    try {
+      final username = _usernameController.text.trim();
+      await ApiClient.registerUser(
+        _serverController.text, username, _passwordController.text);
+      final token = await ApiClient.loginUser(
+        _serverController.text, username, _passwordController.text);
+      await LocalDb.setMeta(
+          'server_url', _serverController.text.trim().replaceAll(RegExp(r'/$'), ''));
+      await LocalDb.setMeta('token', token);
+      _status = '已登录';
+      _toast('注册成功并已登录');
+    } catch (e) {
+      _toast('注册失败：$e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -99,6 +125,24 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _updateApp() async {
+    final api = await _client();
+    if (api == null) return;
+    try {
+      final info = await api.checkUpdate();
+      final apkUrl = (info['apk_url'] as String? ?? '').trim();
+      if (apkUrl.isEmpty) {
+        _toast('服务端尚未配置 APK 下载地址');
+        return;
+      }
+      final uri = Uri.parse(apkUrl);
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      _toast(ok ? '已打开下载，请安装 APK' : '无法打开下载地址');
+    } catch (e) {
+      _toast('更新失败：$e');
+    }
+  }
+
   Future<void> _logout() async {
     await LocalDb.setMeta('token', '');
     setState(() => _status = '未登录');
@@ -125,19 +169,25 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           TextField(
+            controller: _usernameController,
+            decoration: const InputDecoration(labelText: '用户名（可留空）'),
+          ),
+          TextField(
             controller: _passwordController,
             obscureText: true,
             decoration: const InputDecoration(labelText: '服务器密码'),
           ),
           const SizedBox(height: 8),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               FilledButton(onPressed: _busy ? null : _login, child: const Text('登录')),
-              const SizedBox(width: 8),
+              OutlinedButton(onPressed: _busy ? null : _register, child: const Text('注册')),
               OutlinedButton(onPressed: _busy ? null : _syncNow, child: const Text('立即同步')),
-              const SizedBox(width: 8),
               OutlinedButton(onPressed: _busy ? null : _checkUpdate, child: const Text('检查更新')),
-              const SizedBox(width: 8),
+              FilledButton.tonal(
+                  onPressed: _busy ? null : _updateApp, child: const Text('同步更新版本')),
               OutlinedButton(onPressed: _busy ? null : _logout, child: const Text('退出登录')),
             ],
           ),

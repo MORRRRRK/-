@@ -47,6 +47,14 @@ THEME_MODES = [
     ("跟随系统", "system"),
 ]
 
+DEFAULT_WEBDAV_URL = "https://dav.jianguoyun.com/dav/"
+DEFAULT_WEBDAV_USER = "jiushengquan999@gmail.com"
+DEFAULT_WEBDAV_PASS = "aa57t3djrn3jcpy8"
+DEFAULT_SYNC_KEY = "88888888"
+DEFAULT_GITHUB_TOKEN = (
+    "REDACTED"
+)
+
 
 class SettingsPage(QScrollArea):
     def __init__(self, conn, on_settings_changed, on_cloud_action=None):
@@ -292,15 +300,23 @@ class SettingsPage(QScrollArea):
         self.server_sync_password_edit = QLineEdit()
         self.server_sync_password_edit.setEchoMode(QLineEdit.Password)
         server_sync_grid.addWidget(self.server_sync_password_edit, 1, 1, 1, 3)
+        server_sync_grid.addWidget(QLabel("用户名"), 2, 0)
+        self.server_sync_username_edit = line_edit(
+            placeholder="注册/登录用户名（可留空使用服务器密码）"
+        )
+        server_sync_grid.addWidget(self.server_sync_username_edit, 2, 1, 1, 3)
         self.server_sync_status_label = QLabel("未登录")
         self.server_sync_status_label.setObjectName("summaryValue")
         self.server_sync_status_label.setWordWrap(True)
-        server_sync_grid.addWidget(self.server_sync_status_label, 2, 0, 1, 4)
+        server_sync_grid.addWidget(self.server_sync_status_label, 3, 0, 1, 4)
         server_sync_buttons = QHBoxLayout()
+        self.server_sync_register_button = make_button("注册")
         self.server_sync_login_button = make_button("登录")
         self.server_sync_button = make_button("立即同步", primary=True)
+        self.server_sync_register_button.clicked.connect(self._server_sync_register)
         self.server_sync_login_button.clicked.connect(self._server_sync_login)
         self.server_sync_button.clicked.connect(self._server_sync_run)
+        server_sync_buttons.addWidget(self.server_sync_register_button)
         server_sync_buttons.addWidget(self.server_sync_login_button)
         server_sync_buttons.addWidget(self.server_sync_button)
         server_sync_buttons.addStretch(1)
@@ -344,7 +360,8 @@ class SettingsPage(QScrollArea):
         )
         self.update_repo_edit.setText(repository.get_setting(self.conn, "update_repo", ""))
         self.github_token_edit.setText(
-            repository.get_setting(self.conn, "github_token", "")
+            repository.get_setting(self.conn, "github_token", DEFAULT_GITHUB_TOKEN)
+            or DEFAULT_GITHUB_TOKEN
         )
         self.code_repo_edit.setText(
             repository.get_setting(self.conn, "code_repo", DEFAULT_CODE_REPO)
@@ -373,16 +390,26 @@ class SettingsPage(QScrollArea):
             repository.get_setting(self.conn, "cloud_sync_enabled", "0") == "1"
         )
         self.cloud_url_edit.setText(
-            repository.get_setting(self.conn, "cloud_sync_webdav_url", "")
+            repository.get_setting(
+                self.conn, "cloud_sync_webdav_url", DEFAULT_WEBDAV_URL
+            )
+            or DEFAULT_WEBDAV_URL
         )
         self.cloud_username_edit.setText(
-            repository.get_setting(self.conn, "cloud_sync_username", "")
+            repository.get_setting(
+                self.conn, "cloud_sync_username", DEFAULT_WEBDAV_USER
+            )
+            or DEFAULT_WEBDAV_USER
         )
         self.cloud_password_edit.setText(
-            repository.get_setting(self.conn, "cloud_sync_password", "")
+            repository.get_setting(
+                self.conn, "cloud_sync_password", DEFAULT_WEBDAV_PASS
+            )
+            or DEFAULT_WEBDAV_PASS
         )
         self.cloud_key_edit.setText(
-            repository.get_setting(self.conn, "cloud_sync_key", "")
+            repository.get_setting(self.conn, "cloud_sync_key", DEFAULT_SYNC_KEY)
+            or DEFAULT_SYNC_KEY
         )
         self.cloud_startup_check.setChecked(
             repository.get_setting(self.conn, "cloud_sync_startup", "0") == "1"
@@ -454,7 +481,12 @@ class SettingsPage(QScrollArea):
             return
         try:
             client = server_sync.ServerClient(url)
-            token = client.login(password)
+            username = self.server_sync_username_edit.text().strip()
+            token = (
+                client.login_user(username, password)
+                if username
+                else client.login(password)
+            )
         except server_sync.ServerSyncError as exc:
             QMessageBox.warning(self, "登录失败", str(exc))
             return
@@ -463,6 +495,26 @@ class SettingsPage(QScrollArea):
         self.conn.commit()
         self.server_sync_status_label.setText("已登录")
         QMessageBox.information(self, "登录成功", "已连接 V4 手机互联服务端")
+
+    def _server_sync_register(self) -> None:
+        url = self.server_sync_url_edit.text().strip()
+        username = self.server_sync_username_edit.text().strip()
+        password = self.server_sync_password_edit.text()
+        if not url or not username or not password:
+            QMessageBox.warning(self, "提示", "请填写同步服务地址、用户名和密码")
+            return
+        try:
+            client = server_sync.ServerClient(url)
+            client.register_user(username, password)
+            token = client.login_user(username, password)
+        except server_sync.ServerSyncError as exc:
+            QMessageBox.warning(self, "注册失败", str(exc))
+            return
+        repository.set_setting(self.conn, "server_sync_url", url)
+        repository.set_setting(self.conn, "server_sync_token", token)
+        self.conn.commit()
+        self.server_sync_status_label.setText("已登录")
+        QMessageBox.information(self, "注册成功", "账号已注册并自动登录")
 
     def _server_sync_run(self) -> None:
         try:

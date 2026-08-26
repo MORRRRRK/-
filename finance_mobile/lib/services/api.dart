@@ -20,6 +20,48 @@ class ApiClient {
     return data['token'] as String;
   }
 
+  static Future<String> loginUser(
+    String baseUrl,
+    String username,
+    String password,
+  ) async {
+    final uri = Uri.parse(
+      '${baseUrl.trim().replaceAll(RegExp(r'/$'), '')}/api/v1/auth/login',
+    );
+    final resp = await http
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'username': username, 'password': password}),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode != 200) {
+      throw Exception('登录失败：${resp.statusCode} ${utf8.decode(resp.bodyBytes)}');
+    }
+    final data = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    return data['token'] as String;
+  }
+
+  static Future<void> registerUser(
+    String baseUrl,
+    String username,
+    String password,
+  ) async {
+    final uri = Uri.parse(
+      '${baseUrl.trim().replaceAll(RegExp(r'/$'), '')}/api/v1/auth/register',
+    );
+    final resp = await http
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'username': username, 'password': password}),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode != 200) {
+      throw Exception('注册失败：${resp.statusCode} ${utf8.decode(resp.bodyBytes)}');
+    }
+  }
+
   Future<Map<String, dynamic>> _send(
     String method,
     String path, {

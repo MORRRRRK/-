@@ -22,6 +22,13 @@ def _init(conn: sqlite3.Connection) -> None:
           created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
         );
 
+        CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+
         CREATE TABLE IF NOT EXISTS entities (
           table_name TEXT NOT NULL,
           row_id INTEGER NOT NULL,
@@ -59,3 +66,19 @@ def token_exists(conn: sqlite3.Connection, token: str) -> bool:
         "SELECT 1 FROM auth_tokens WHERE token = ?", (token,)
     ).fetchone()
     return row is not None
+
+
+def add_user(conn: sqlite3.Connection, username: str, password_hash: str) -> int:
+    cur = conn.execute(
+        "INSERT INTO users(username, password_hash) VALUES (?, ?)",
+        (username, password_hash),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def get_user(conn: sqlite3.Connection, username: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM users WHERE username = ?", (username,)
+    ).fetchone()
+    return dict(row) if row else None

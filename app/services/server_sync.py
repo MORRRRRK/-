@@ -59,6 +59,21 @@ class ServerClient:
         self.token = token
         return token
 
+    def register_user(self, username: str, password: str) -> None:
+        self._request(
+            "POST", "/api/v1/auth/register", {"username": username, "password": password}
+        )
+
+    def login_user(self, username: str, password: str) -> str:
+        data = self._request(
+            "POST", "/api/v1/auth/login", {"username": username, "password": password}
+        )
+        token = str(data.get("token") or "")
+        if not token:
+            raise ServerSyncError("服务器未返回 Token")
+        self.token = token
+        return token
+
     def snapshot(self) -> dict:
         return self._request("GET", "/api/v1/sync/snapshot")
 
@@ -157,6 +172,8 @@ def _apply_snapshot(conn: sqlite3.Connection, tables: dict) -> tuple[int, int]:
                 continue
             if table == "monthly_records":
                 year = row_id // 100
+                if year < 2000:
+                    continue
                 month = row_id % 100
                 year_id = repository.ensure_year(conn, year)
                 repository.upsert_monthly_records(
@@ -164,6 +181,8 @@ def _apply_snapshot(conn: sqlite3.Connection, tables: dict) -> tuple[int, int]:
                 )
             elif table == "large_items":
                 year = int(data.get("year") or _year_from_date(data.get("item_date")))
+                if year < 2000:
+                    continue
                 year_id = repository.ensure_year(conn, year)
                 _upsert_large_item(conn, year_id, row_id, data)
             elif table == "holdings":

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QDialog,
     QFileDialog,
+    QInputDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -21,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.paths import exports_dir
-from ...services import account_service, exporter, transaction_service
+from ...services import account_service, exporter, importer, transaction_service
 from ..widgets import (
     Section,
     TransactionDialog,
@@ -52,14 +53,20 @@ class TransactionsPage(QScrollArea):
         self.income_button = make_button("记收入", primary=True)
         self.transfer_button = make_button("转账", primary=True)
         self.delete_button = make_button("删除")
+        self.bluecoins_button = make_button("导入 BlueCoins")
+        self.delete_history_button = make_button("删除历史")
         self.expense_button.clicked.connect(lambda: self._add("expense"))
         self.income_button.clicked.connect(lambda: self._add("income"))
         self.transfer_button.clicked.connect(lambda: self._add("transfer"))
         self.delete_button.clicked.connect(self._delete)
+        self.bluecoins_button.clicked.connect(self._import_bluecoins)
+        self.delete_history_button.clicked.connect(self._delete_history)
         top.addWidget(self.expense_button)
         top.addWidget(self.income_button)
         top.addWidget(self.transfer_button)
         top.addWidget(self.delete_button)
+        top.addWidget(self.bluecoins_button)
+        top.addWidget(self.delete_history_button)
         top.addStretch(1)
         layout.addLayout(top)
 
@@ -168,6 +175,11 @@ class TransactionsPage(QScrollArea):
         )
 
     def _add(self, trans_type: str) -> None:
+        if not account_service.get_accounts(self.conn):
+            QMessageBox.information(
+                self, "提示", "请先到“账户管理”创建一个账户，再开始记账。"
+            )
+            return
         dialog = TransactionDialog(self.conn, self)
         if trans_type:
             index = dialog.type_combo.findData(trans_type)
@@ -178,6 +190,7 @@ class TransactionsPage(QScrollArea):
         self.conn.commit()
         self.refresh()
         self.on_change()
+        QMessageBox.information(self, "记账成功", "交易已保存。")
 
     def _edit(self) -> None:
         row = self.table.currentRow()
@@ -217,3 +230,44 @@ class TransactionsPage(QScrollArea):
             Path(path),
         )
         QMessageBox.information(self, "导出完成", f"已导出到：\n{path}")
+
+    def _import_bluecoins(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入 BlueCoins CSV", "", "CSV (*.csv)"
+        )
+        if not path:
+            return
+        try:
+            count = importer.import_bluecoins_csv(self.conn, Path(path))
+        except Exception as exc:
+            QMessageBox.warning(self, "导入失败", str(exc))
+            return
+        self.conn.commit()
+        self.refresh()
+        self.on_change()
+        QMessageBox.information(self, "导入完成", f"成功导入 {count} 条交易。")
+
+    def _delete_history(self) -> None:
+        cutoff, ok = QInputDialog.getText(
+            self,
+            "删除历史记录",
+            "删除该日期之前的所有交易（留空删除全部）：\n格式 2026-01-01",
+        )
+        if not ok:
+            return
+        cutoff = cutoff.strip()
+        if not confirm_delete(
+            self, "删除历史", f"确定删除{(' ' + cutoff + ' 之前') if cutoff else '全部'}交易记录？"
+        ):
+            return
+        rows = transaction_service.get_transactions(self.conn)
+        deleted = 0
+        for row in rows:
+            if cutoff and row["trans_date"] >= cutoff:
+                continue
+            transaction_service.delete_transaction(self.conn, row["id"])
+            deleted += 1
+        self.conn.commit()
+        self.refresh()
+        self.on_change()
+        QMessageBox.information(self, "删除完成", f"已删除 {deleted} 条历史记录。")

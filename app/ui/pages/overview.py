@@ -145,6 +145,8 @@ class OverviewPage(QScrollArea):
         self.month_year_combo.blockSignals(True)
         self.month_year_combo.clear()
         for year in years:
+            if year["year"] < 2000:
+                continue
             self.month_year_combo.addItem(str(year["year"]), year["year"])
         if selected_year is None and years:
             selected_year = years[-1]["year"]
@@ -198,6 +200,8 @@ class OverviewPage(QScrollArea):
                     expense_values.append(expense)
         else:
             for year in years:
+                if year["year"] < 2000:
+                    continue
                 summary = calculations.year_summary(self.conn, year["id"])
                 rows.append(
                     [
@@ -238,6 +242,8 @@ class OverviewPage(QScrollArea):
             }
         if has_transactions:
             for year in years:
+                if year["year"] < 2000:
+                    continue
                 summary = transaction_service.get_yearly_summary(
                     self.conn, year["year"]
                 )

@@ -30,7 +30,7 @@ def pct(value: float) -> str:
 
 def make_year_combo(years: list[int]) -> QComboBox:
     combo = QComboBox()
-    for year in sorted(years, reverse=True):
+    for year in sorted((y for y in years if int(y) >= 2000), reverse=True):
         combo.addItem(str(year), year)
     return combo
 

@@ -18,7 +18,15 @@ from ...services.release import DEFAULT_CODE_REPO, DEFAULT_REPO
 from ..release_worker import ReleasePushWorker
 from ..widgets import make_button
 
-CHANGELOG = """V4.2
+CHANGELOG = """V4.3
+· 新增账号注册/登录：注册信息加密保存在同步服务端
+· 记账流水支持 BlueCoins CSV 联动导入，按钮操作增加明确反馈
+· 新增删除历史记录功能
+· 修复资产总览异常年份，所有年份下拉从 2000 年开始
+· 内置坚果云 WebDAV 与 GitHub Token 配置
+· 手机端新增“同步更新版本”按钮，支持远程 APK 更新；软件名改为“个人财务-开发版”
+
+V4.2
 · 新增账户管理：现金/银行卡/支付宝/微信/信用卡/贷款等，自动汇总总资产、总负债、净资产
 · 新增日常逐笔记账：支出/收入/转账、分类、账户、商家、备注、可报销
 · 持仓管理新增交易历史：买入/卖出/分红/定投/赎回，按 FIFO 计算成本与收益

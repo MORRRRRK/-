@@ -84,6 +84,61 @@ def import_wechat_bill(conn: sqlite3.Connection, file_path: Path) -> int:
     return import_transactions_csv(conn, file_path)
 
 
+def import_bluecoins_csv(conn: sqlite3.Connection, file_path: Path) -> int:
+    """导入 BlueCoins 导出的 CSV 交易记录。"""
+    import csv
+
+    from . import account_service, category_service, transaction_service
+
+    count = 0
+    with file_path.open("r", encoding="utf-8-sig") as fh:
+        reader = csv.DictReader(fh)
+        accounts = {a["name"]: a["id"] for a in account_service.get_accounts(conn)}
+        categories = {
+            c["name"]: c["id"] for c in conn.execute(
+                "SELECT id, name FROM transaction_categories"
+            )
+        }
+        for row in reader:
+            date = _text(row.get("Date") or row.get("日期") or "")
+            amount_text = _text(row.get("Amount") or row.get("金额") or "0")
+            amount = _num(amount_text.replace(",", "").replace("¥", "").strip())
+            if not date or amount == 0:
+                continue
+            merchant = _text(row.get("Description") or row.get("商家") or "")
+            note = _text(row.get("Note") or row.get("备注") or "")
+            category_name = _text(row.get("Category") or row.get("分类") or "其他支出")
+            account_name = _text(row.get("Account") or row.get("账户") or "默认账户")
+            expense_type = _text(row.get("ExpenseType") or row.get("类型") or "")
+            trans_type = "income" if "income" in expense_type.lower() or amount < 0 else "expense"
+            amount = abs(amount)
+            if account_name not in accounts:
+                account_id = account_service.add_account(conn, account_name, "other")
+                accounts[account_name] = account_id
+            else:
+                account_id = accounts[account_name]
+            if category_name not in categories:
+                category_id = category_service.add_category(
+                    conn, category_name, trans_type
+                )
+                categories[category_name] = category_id
+            else:
+                category_id = categories[category_name]
+            transaction_service.add_transaction(
+                conn,
+                trans_date=date,
+                trans_type=trans_type,
+                amount=amount,
+                category_id=category_id,
+                account_id=account_id,
+                merchant=merchant,
+                note=note,
+            )
+            count += 1
+    conn.commit()
+    return count
+
+
 def _parse_monthly_sheet(ws) -> list[dict[str, Any]]:
     def header_texts(row_number: int) -> dict[int, str]:
         texts = {}
