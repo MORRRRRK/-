@@ -8,7 +8,8 @@ import sys
 import time
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -444,5 +445,28 @@ def report_generate(
 
 
 @app.get("/api/v1/update")
-def update(_: str = Depends(require_token)) -> dict:
-    return {"version": APP_VERSION, "apk_url": APK_URL, "notes": APP_NOTES}
+def update(request: Request, _: str = Depends(require_token)) -> dict:
+    apk_url = APK_URL
+    if not apk_url:
+        apk_url = f"{str(request.base_url).rstrip('/')}/download/finance-app.apk"
+    return {"version": APP_VERSION, "apk_url": apk_url, "notes": APP_NOTES}
+
+
+@app.get("/download/finance-app.apk")
+def download_apk() -> FileResponse:
+    path = (
+        PROJECT_ROOT
+        / "finance_mobile"
+        / "build"
+        / "app"
+        / "outputs"
+        / "flutter-apk"
+        / "app-debug.apk"
+    )
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="APK 文件不存在")
+    return FileResponse(
+        path,
+        media_type="application/vnd.android.package-archive",
+        filename="finance-app.apk",
+    )

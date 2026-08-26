@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import configparser
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core import repository
-from ...core.paths import backups_dir, exports_dir
+from ...core.paths import app_root, backups_dir, exports_dir
 from ...services import llm, server_sync
 from ...services.release import DEFAULT_CODE_REPO
 from ...edition import is_customer
@@ -51,9 +52,18 @@ DEFAULT_WEBDAV_URL = "https://dav.jianguoyun.com/dav/我的坚果云/"
 DEFAULT_WEBDAV_USER = "jiushengquan999@gmail.com"
 DEFAULT_WEBDAV_PASS = "aa57t3djrn3jcpy8"
 DEFAULT_SYNC_KEY = "88888888"
-DEFAULT_GITHUB_TOKEN = (
-    "REDACTED"
-)
+
+def _default_github_token() -> str:
+    """从本地 gitignore 的 dev_config.ini 读取开发版内置 Token，避免写入源码。"""
+    ini = app_root() / "dev_config.ini"
+    if not ini.exists():
+        return ""
+    try:
+        parser = configparser.ConfigParser()
+        parser.read(ini, encoding="utf-8")
+        return parser.get("dev", "github_token", fallback="").strip()
+    except Exception:
+        return ""
 
 
 class SettingsPage(QScrollArea):
@@ -360,8 +370,8 @@ class SettingsPage(QScrollArea):
         )
         self.update_repo_edit.setText(repository.get_setting(self.conn, "update_repo", ""))
         self.github_token_edit.setText(
-            repository.get_setting(self.conn, "github_token", DEFAULT_GITHUB_TOKEN)
-            or DEFAULT_GITHUB_TOKEN
+            repository.get_setting(self.conn, "github_token", "")
+            or _default_github_token()
         )
         self.code_repo_edit.setText(
             repository.get_setting(self.conn, "code_repo", DEFAULT_CODE_REPO)

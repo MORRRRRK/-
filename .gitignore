@@ -12,3 +12,4 @@ releases/
 edition.ini
 *.spec
 finance-server/*.db
+dev_config.ini

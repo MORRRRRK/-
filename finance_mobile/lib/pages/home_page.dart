@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../db/database.dart';
+import '../services/api.dart';
+import '../services/sync.dart';
 import 'expense_page.dart';
 import 'functions_page.dart';
 import 'holdings_page.dart';
@@ -18,6 +21,23 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _tab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _autoSync();
+  }
+
+  Future<void> _autoSync() async {
+    final server = await LocalDb.meta('server_url') ?? '';
+    final token = await LocalDb.meta('token') ?? '';
+    if (server.isEmpty || token.isEmpty) return;
+    try {
+      await SyncService.fullSync(ApiClient(baseUrl: server, token: token));
+    } catch (_) {
+      // 启动时静默同步，失败不影响本地使用。
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

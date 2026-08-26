@@ -106,6 +106,7 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final info = await api.checkUpdate();
       if (!mounted) return;
+      final apkUrl = (info['apk_url'] as String? ?? '').trim();
       showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
@@ -113,9 +114,17 @@ class _SettingsPageState extends State<SettingsPage> {
           content: Text(
             '服务端版本：${info['version']}\n'
             '${info['notes']}\n'
-            'APK 地址：${info['apk_url'] ?? '未配置'}',
+            'APK 地址：${apkUrl.isEmpty ? '未配置' : apkUrl}',
           ),
           actions: [
+            if (apkUrl.isNotEmpty)
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _openApk(apkUrl);
+                },
+                child: const Text('立即更新'),
+              ),
             TextButton(onPressed: () => Navigator.pop(context), child: const Text('知道了')),
           ],
         ),
@@ -125,22 +134,10 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  Future<void> _updateApp() async {
-    final api = await _client();
-    if (api == null) return;
-    try {
-      final info = await api.checkUpdate();
-      final apkUrl = (info['apk_url'] as String? ?? '').trim();
-      if (apkUrl.isEmpty) {
-        _toast('服务端尚未配置 APK 下载地址');
-        return;
-      }
-      final uri = Uri.parse(apkUrl);
-      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      _toast(ok ? '已打开下载，请安装 APK' : '无法打开下载地址');
-    } catch (e) {
-      _toast('更新失败：$e');
-    }
+  Future<void> _openApk(String url) async {
+    final uri = Uri.parse(url);
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    _toast(ok ? '已打开下载，请安装 APK' : '无法打开下载地址');
   }
 
   Future<void> _logout() async {
@@ -184,10 +181,7 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               FilledButton(onPressed: _busy ? null : _login, child: const Text('登录')),
               OutlinedButton(onPressed: _busy ? null : _register, child: const Text('注册')),
-              OutlinedButton(onPressed: _busy ? null : _syncNow, child: const Text('立即同步')),
               OutlinedButton(onPressed: _busy ? null : _checkUpdate, child: const Text('检查更新')),
-              FilledButton.tonal(
-                  onPressed: _busy ? null : _updateApp, child: const Text('同步更新版本')),
               OutlinedButton(onPressed: _busy ? null : _logout, child: const Text('退出登录')),
             ],
           ),
