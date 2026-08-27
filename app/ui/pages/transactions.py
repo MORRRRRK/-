@@ -22,12 +22,16 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.paths import exports_dir
+from ...core import repository
 from ...services import account_service, exporter, importer, transaction_service
 from ..widgets import (
     Section,
     TransactionDialog,
     confirm_delete,
+    flash_saved,
     make_button,
+    make_money_spin,
+    make_year_combo,
     money,
 )
 
@@ -54,18 +58,21 @@ class TransactionsPage(QScrollArea):
         self.transfer_button = make_button("转账", primary=True)
         self.delete_button = make_button("删除")
         self.bluecoins_button = make_button("导入 BlueCoins")
+        self.bluecoins_export_button = make_button("导出 BlueCoins")
         self.delete_history_button = make_button("删除历史")
         self.expense_button.clicked.connect(lambda: self._add("expense"))
         self.income_button.clicked.connect(lambda: self._add("income"))
         self.transfer_button.clicked.connect(lambda: self._add("transfer"))
         self.delete_button.clicked.connect(self._delete)
         self.bluecoins_button.clicked.connect(self._import_bluecoins)
+        self.bluecoins_export_button.clicked.connect(self._export_bluecoins)
         self.delete_history_button.clicked.connect(self._delete_history)
         top.addWidget(self.expense_button)
         top.addWidget(self.income_button)
         top.addWidget(self.transfer_button)
         top.addWidget(self.delete_button)
         top.addWidget(self.bluecoins_button)
+        top.addWidget(self.bluecoins_export_button)
         top.addWidget(self.delete_history_button)
         top.addStretch(1)
         layout.addLayout(top)
@@ -105,6 +112,25 @@ class TransactionsPage(QScrollArea):
             filters.addWidget(widget)
         layout.addLayout(filters)
 
+        month_row = QHBoxLayout()
+        month_row.setSpacing(4)
+        month_row.addWidget(QLabel("月份"))
+        self.month_buttons: dict[int, QWidget] = {}
+        for month in range(1, 13):
+            button = make_button(f"{month}月")
+            button.setFixedWidth(46)
+            button.clicked.connect(
+                lambda _=False, m=month: self._select_month(m)
+            )
+            self.month_buttons[month] = button
+            month_row.addWidget(button)
+        self.all_button = make_button("全部")
+        self.all_button.setFixedWidth(52)
+        self.all_button.clicked.connect(self._select_all)
+        month_row.addWidget(self.all_button)
+        month_row.addStretch(1)
+        layout.addLayout(month_row)
+
         section = Section("交易记录")
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
@@ -119,7 +145,118 @@ class TransactionsPage(QScrollArea):
         self.summary_label = QLabel("")
         self.summary_label.setObjectName("summaryValue")
         layout.addWidget(self.summary_label)
+
+        self._build_deposit_section(layout)
         self.refresh()
+
+    def _build_deposit_section(self, layout) -> None:
+        section = Section("每月强制存款（独立维护，表面是支出，实际计入存款）")
+        top = QHBoxLayout()
+        top.addWidget(QLabel("年份"))
+        years = sorted(
+            {
+                int(y["year"])
+                for y in repository.list_years(self.conn)
+                if int(y["year"]) >= 2000
+            }
+            | {QDate.currentDate().year()}
+        )
+        self.deposit_year_combo = (
+            make_year_combo(years) if years else QComboBox()
+        )
+        self.deposit_year_combo.currentIndexChanged.connect(
+            lambda _: self._load_deposits()
+        )
+        top.addWidget(self.deposit_year_combo)
+        self.deposit_save_button = make_button("保存强制存款", primary=True)
+        self.deposit_save_button.clicked.connect(self._save_deposits)
+        top.addWidget(self.deposit_save_button)
+        top.addStretch(1)
+        section.add_layout(top)
+
+        self.deposit_table = QTableWidget(12, 2)
+        self.deposit_table.setHorizontalHeaderLabels(["月份", "强制存款"])
+        self.deposit_table.verticalHeader().setVisible(False)
+        self.deposit_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Stretch
+        )
+        self.deposit_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.deposit_spins: dict[int, QWidget] = {}
+        for month in range(1, 13):
+            month_item = QTableWidgetItem(f"{month} 月")
+            month_item.setTextAlignment(Qt.AlignCenter)
+            self.deposit_table.setItem(month - 1, 0, month_item)
+            spin = make_money_spin(0.0, 0.0, 1e8)
+            self.deposit_spins[month] = spin
+            self.deposit_table.setCellWidget(month - 1, 1, spin)
+        self.deposit_table.setMinimumHeight(12 * 32 + 34)
+        section.add(self.deposit_table)
+        layout.addWidget(section)
+
+    def _select_month(self, month: int) -> None:
+        year = self._deposit_year()
+        first = QDate(year, month, 1)
+        self.start_date.setDate(first)
+        self.end_date.setDate(first.addMonths(1).addDays(-1))
+        self.refresh()
+
+    def _select_all(self) -> None:
+        self.start_date.setDate(QDate(2000, 1, 1))
+        self.end_date.setDate(QDate(2099, 12, 31))
+        self.refresh()
+
+    def _deposit_year(self) -> int:
+        if hasattr(self, "deposit_year_combo"):
+            data = self.deposit_year_combo.currentData()
+            if data:
+                return int(data)
+        return QDate.currentDate().year()
+
+    def _load_deposits(self) -> None:
+        if not hasattr(self, "deposit_spins"):
+            return
+        year = self._deposit_year()
+        year_id = repository.ensure_year(self.conn, year)
+        records = repository.get_monthly_records(self.conn, year_id)
+        for month in range(1, 13):
+            rec = records.get(month, {})
+            self.deposit_spins[month].setValue(
+                float(rec.get("forced_deposit", 0.0) or 0.0)
+            )
+
+    def _save_deposits(self) -> None:
+        year = self._deposit_year()
+        year_id = repository.ensure_year(self.conn, year)
+        records = repository.get_monthly_records(self.conn, year_id)
+        rows = []
+        for month in range(1, 13):
+            rec = dict(records.get(month) or {"month": month})
+            rec["month"] = month
+            rec["forced_deposit"] = float(self.deposit_spins[month].value())
+            rows.append(rec)
+        repository.upsert_monthly_records(self.conn, year_id, rows)
+        self.conn.commit()
+        flash_saved(self.deposit_save_button)
+        self.on_change()
+
+    def _export_bluecoins(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出 BlueCoins CSV",
+            str(exports_dir() / "bluecoins_transactions.csv"),
+            "CSV (*.csv)",
+        )
+        if not path:
+            return
+        count = exporter.export_bluecoins_csv(
+            self.conn,
+            self.start_date.date().toString("yyyy-MM-dd"),
+            self.end_date.date().toString("yyyy-MM-dd"),
+            Path(path),
+        )
+        QMessageBox.information(
+            self, "导出完成", f"已导出 {count} 条 BlueCoins 格式交易到：\n{path}"
+        )
 
     def refresh(self) -> None:
         rows = transaction_service.get_transactions(
@@ -173,8 +310,19 @@ class TransactionsPage(QScrollArea):
         self.summary_label.setText(
             f"收入 {money(income)}  支出 {money(expense)}  结余 {money(income - expense)}"
         )
+        self._load_deposits()
 
     def _add(self, trans_type: str) -> None:
+        start = self.start_date.date()
+        end = self.end_date.date()
+        if start != end:
+            QMessageBox.information(
+                self,
+                "提示",
+                "请先把日期范围选择到具体某一天（起始日期 = 结束日期），"
+                "再点击记支出/记收入，新记录会加到当天流水末尾。",
+            )
+            return
         if not account_service.get_accounts(self.conn):
             QMessageBox.information(
                 self, "提示", "请先到“账户管理”创建一个账户，再开始记账。"
@@ -184,6 +332,7 @@ class TransactionsPage(QScrollArea):
         if trans_type:
             index = dialog.type_combo.findData(trans_type)
             dialog.type_combo.setCurrentIndex(max(0, index))
+        dialog.date_edit.setDate(start)
         if dialog.exec() != QDialog.Accepted:
             return
         try:

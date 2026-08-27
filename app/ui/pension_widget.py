@@ -45,11 +45,16 @@ class PensionWidget(QWidget):
         super().__init__()
         self.conn = conn
         self.on_change = on_change
+        self._salary_payload: dict | None = None
         self._pension_rows: list[dict] = []
         self._pension_ids: list[int | None] = []
         self._deleted_pension_jobs: list[dict] = []
         self._build()
         self._reload_pension()
+
+    def set_salary_payload(self, payload: dict | None) -> None:
+        """接收当前工资方案，用于“从工资参数填充基数”。"""
+        self._salary_payload = payload
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
@@ -151,6 +156,13 @@ class PensionWidget(QWidget):
         self._reload_pension()
 
     def _salary_pension_base(self) -> float:
+        payload = self._salary_payload
+        if payload:
+            for item in payload.get("items") or []:
+                if item.get("name") == "养老" and float(item.get("base") or 0) > 0:
+                    return float(item["base"])
+            params = payload.get("params") or {}
+            return float(params.get("monthly_salary") or 0.0)
         years = repository.list_years(self.conn)
         if not years:
             return 0.0
@@ -162,6 +174,13 @@ class PensionWidget(QWidget):
         return float(params.get("monthly_salary") or 0.0)
 
     def _salary_pension_rate(self) -> float:
+        payload = self._salary_payload
+        if payload:
+            for item in payload.get("items") or []:
+                if item.get("name") == "养老":
+                    return float(item.get("personal_rate") or 0.08)
+            params = payload.get("params") or {}
+            return float(params.get("pension_personal_rate") or 0.08)
         years = repository.list_years(self.conn)
         if not years:
             return 0.08

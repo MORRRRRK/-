@@ -337,12 +337,41 @@ def monthly_schedule_actual(
 ) -> dict[str, Any]:
     """按实际月度流水计算累计预扣预缴，返回逐月明细与年度汇总。"""
     social = calculations.social_insurance(conn, year_id)
+    tax_params = repository.get_tax_params(conn, year_id) or default_tax_params()
+    return _monthly_schedule(
+        conn, year_id, social, tax_params, method_override
+    )
+
+
+def monthly_schedule_profile(
+    conn: sqlite3.Connection,
+    year: int,
+    payload: dict[str, Any],
+    method_override: str | None = None,
+) -> dict[str, Any]:
+    """按工资方案 payload 与实际月度流水计算累计预扣预缴。"""
+    from . import salary as salary_service
+
+    social = salary_service.social_result(payload)
+    tax_params = salary_service.tax_params(payload)
+    year_id = repository.ensure_year(conn, year)
+    return _monthly_schedule(
+        conn, year_id, social, tax_params, method_override
+    )
+
+
+def _monthly_schedule(
+    conn: sqlite3.Connection,
+    year_id: int,
+    social: dict[str, Any],
+    tax_params: dict[str, Any],
+    method_override: str | None = None,
+) -> dict[str, Any]:
     personal_monthly = (
         float(social.get("personal_total") or 0.0)
         if social.get("has_params")
         else 0.0
     )
-    tax_params = repository.get_tax_params(conn, year_id) or default_tax_params()
     method = (
         method_override
         or str(tax_params.get("bonus_tax_method") or "separate")

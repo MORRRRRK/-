@@ -76,6 +76,42 @@ def apply_theme(window: QMainWindow, conn) -> None:
             border: 1px solid __BORDER__;
             border-radius: 6px;
         }
+        QFrame#bigStatCard {
+            background: __PANEL__;
+            border: 1px solid __ACCENT__;
+            border-radius: 8px;
+        }
+        QFrame#summaryStatCard {
+            background: __PANEL__;
+            border: 1px solid __BORDER__;
+            border-radius: 8px;
+        }
+        QFrame#bigStatCard QLabel#cardValue,
+        QFrame#summaryStatCard QLabel#cardValue {
+            font-size: 28px;
+            font-weight: 700;
+        }
+        QFrame#bigStatCard QLabel#cardTitle,
+        QFrame#summaryStatCard QLabel#cardTitle {
+            font-size: 14px;
+        }
+        QFrame#divider {
+            background: __BORDER__;
+            border: none;
+            min-height: 1px;
+            max-height: 1px;
+        }
+        QLabel#pageTitle {
+            font-size: 22px;
+            font-weight: 700;
+            color: __TEXT__;
+        }
+        QTextBrowser {
+            background: __PANEL__;
+            border: 1px solid __BORDER__;
+            border-radius: 6px;
+            padding: 6px;
+        }
         QLabel#cardTitle { color: __MUTED__; font-size: 13px; }
         QLabel#cardValue {
             font-size: 22px;

@@ -3,13 +3,18 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
+    QDialog,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QMessageBox,
+    QPushButton,
     QScrollArea,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -18,7 +23,8 @@ from PySide6.QtWidgets import (
 
 from ...core import repository
 from ...edition import is_customer
-from ...services import calculations, tax as tax_service
+from ...services import salary as salary_service
+from ...services import tax as tax_service
 from ..pension_widget import PensionWidget
 from ..widgets import (
     NoWheelSpinBox,
@@ -32,13 +38,220 @@ from ..widgets import (
 )
 
 
-class InsurancePage(QScrollArea):
-    """工资管理：工资详情、N险N金、专项附加扣除、税后模拟与全年个税汇总。"""
+class InsurancePage(QWidget):
+    """工资管理：多工资方案标签页，可新增、收起与历史查询。"""
 
-    def __init__(self, conn, on_change):
+    def __init__(self, conn, on_change=None):
         super().__init__()
         self.conn = conn
         self.on_change = on_change
+        self._reloading = False
+        self._build()
+        self._reload_profiles()
+
+    def _build(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        toolbar = QHBoxLayout()
+        self.add_profile_button = make_button("新增方案", primary=True)
+        self.history_button = make_button("历史查询")
+        self.add_profile_button.clicked.connect(self._new_profile)
+        self.history_button.clicked.connect(self._show_history)
+        toolbar.addWidget(self.add_profile_button)
+        toolbar.addWidget(self.history_button)
+        toolbar.addStretch(1)
+        layout.addLayout(toolbar)
+
+        self.tabs = QTabWidget()
+        self.tabs.setTabsClosable(True)
+        self.tabs.setMovable(True)
+        self.tabs.tabCloseRequested.connect(self._close_tab)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        layout.addWidget(self.tabs, 1)
+
+    def _reload_profiles(self) -> None:
+        self._reloading = True
+        try:
+            self.tabs.blockSignals(True)
+            self.tabs.clear()
+            profiles = repository.list_open_salary_profiles(self.conn)
+            if not profiles:
+                repository.ensure_open_salary_profile(self.conn)
+                self.conn.commit()
+                profiles = repository.list_open_salary_profiles(self.conn)
+            for profile in profiles:
+                tab = SalaryProfileTab(self.conn, profile, self.on_change)
+                self.tabs.addTab(tab, profile["name"])
+        finally:
+            self.tabs.blockSignals(False)
+            self._reloading = False
+        if self.tabs.count():
+            self.tabs.setCurrentIndex(0)
+
+    def _on_tab_changed(self, _index: int) -> None:
+        if self._reloading:
+            return
+        self._persist_all_tabs()
+
+    def _persist_all_tabs(self) -> None:
+        for index in range(self.tabs.count()):
+            self._persist_tab(index)
+
+    def _persist_tab(self, index: int) -> None:
+        tab = self.tabs.widget(index)
+        if not isinstance(tab, SalaryProfileTab):
+            return
+        payload = tab.current_payload()
+        repository.save_salary_profile(
+            self.conn,
+            tab.profile_id,
+            tab.profile_name,
+            payload["year"],
+            payload,
+        )
+        self.conn.commit()
+
+    def _close_tab(self, index: int) -> None:
+        if self.tabs.count() <= 1:
+            QMessageBox.information(self, "提示", "至少保留一个工资方案")
+            return
+        tab = self.tabs.widget(index)
+        if not isinstance(tab, SalaryProfileTab):
+            return
+        self._persist_tab(index)
+        repository.set_salary_profile_open(self.conn, tab.profile_id, 0)
+        self.conn.commit()
+        self.tabs.removeTab(index)
+
+    def _new_profile(self) -> None:
+        count = (
+            len(repository.list_salary_profiles(self.conn)) + 1
+        )
+        name, ok = QInputDialog.getText(
+            self, "新增工资方案", "方案名称：", text=f"新方案{count}"
+        )
+        if not ok or not name.strip():
+            return
+        self._persist_all_tabs()
+        active = self.tabs.currentWidget()
+        if isinstance(active, SalaryProfileTab):
+            year = active.current_payload()["year"]
+            payload = active.current_payload()
+        else:
+            year = 2026
+            payload = salary_service.default_payload(year)
+        payload["year"] = year
+        profile_id = repository.add_salary_profile(
+            self.conn, name.strip(), year, payload
+        )
+        self.conn.commit()
+        profile = repository.get_salary_profile(self.conn, profile_id)
+        tab = SalaryProfileTab(self.conn, profile, self.on_change)
+        index = self.tabs.addTab(tab, profile["name"])
+        self.tabs.setCurrentIndex(index)
+
+    def _show_history(self) -> None:
+        dialog = HistoryDialog(self.conn, self)
+        dialog.exec()
+        if dialog.changed:
+            self._reload_profiles()
+
+    def refresh(self) -> None:
+        self._reload_profiles()
+
+
+class HistoryDialog(QDialog):
+    """已收起的工资方案：可恢复，可永久删除。"""
+
+    def __init__(self, conn, parent=None):
+        super().__init__(parent)
+        self.conn = conn
+        self.changed = False
+        self.setWindowTitle("已收起的工资方案")
+        self.setMinimumSize(680, 420)
+        layout = QVBoxLayout(self)
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["名称", "年份", "更新时间", "操作"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        layout.addWidget(self.table)
+
+        buttons = QHBoxLayout()
+        close_button = make_button("关闭")
+        close_button.clicked.connect(self.accept)
+        buttons.addStretch(1)
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+        self._reload()
+
+    def _reload(self) -> None:
+        rows = [
+            p
+            for p in repository.list_salary_profiles(self.conn)
+            if not p["is_open"]
+        ]
+        self.table.setRowCount(len(rows))
+        for r, profile in enumerate(rows):
+            name_item = QTableWidgetItem(profile["name"])
+            name_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(r, 0, name_item)
+            year_item = QTableWidgetItem(str(profile["year"]))
+            year_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(r, 1, year_item)
+            time_item = QTableWidgetItem(str(profile["updated_at"] or ""))
+            time_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(r, 2, time_item)
+
+            actions = QWidget()
+            actions_layout = QHBoxLayout(actions)
+            actions_layout.setContentsMargins(4, 2, 4, 2)
+            actions_layout.setSpacing(6)
+            restore_button = make_button("恢复")
+            restore_button.clicked.connect(
+                lambda _=False, pid=profile["id"]: self._restore(pid)
+            )
+            delete_button = make_button("删除")
+            delete_button.clicked.connect(
+                lambda _=False, pid=profile["id"]: self._delete(pid)
+            )
+            actions_layout.addWidget(restore_button)
+            actions_layout.addWidget(delete_button)
+            actions_layout.addStretch(1)
+            self.table.setCellWidget(r, 3, actions)
+
+    def _restore(self, profile_id: int) -> None:
+        repository.set_salary_profile_open(self.conn, profile_id, 1)
+        self.conn.commit()
+        self.changed = True
+        self._reload()
+
+    def _delete(self, profile_id: int) -> None:
+        profile = repository.get_salary_profile(self.conn, profile_id)
+        if not profile or not confirm_delete(
+            self, "删除工资方案", f"确定删除“{profile['name']}”？删除后不可恢复。"
+        ):
+            return
+        repository.delete_salary_profile(self.conn, profile_id)
+        self.conn.commit()
+        self.changed = True
+        self._reload()
+
+
+class SalaryProfileTab(QScrollArea):
+    """单个工资方案页面：工资详情、N险N金、专项附加、个税汇总与退休金。"""
+
+    def __init__(self, conn, profile: dict, on_change=None):
+        super().__init__()
+        self.conn = conn
+        self.on_change = on_change
+        self.profile_id = int(profile["id"])
+        self.profile_name = str(profile["name"] or "工资方案")
+        self.payload = salary_service.decode_payload(profile.get("payload"))
         self._deleted_rows: list[dict] = []
         self._deleted_salary_rows: list[dict] = []
         self._loading = False
@@ -47,6 +260,7 @@ class InsurancePage(QScrollArea):
         self._content = QWidget()
         self.setWidget(self._content)
         self._build()
+        self._load()
 
     def _build(self) -> None:
         layout = QVBoxLayout(self._content)
@@ -55,12 +269,24 @@ class InsurancePage(QScrollArea):
 
         top = QHBoxLayout()
         top.addWidget(QLabel("年份"))
-        years = [y["year"] for y in repository.list_years(self.conn)]
+        years = sorted(
+            {
+                int(self.payload.get("year") or 2026),
+                *[
+                    int(y["year"])
+                    for y in repository.list_years(self.conn)
+                    if int(y["year"]) >= 2000
+                ],
+            },
+            reverse=True,
+        )
         self.year_combo = make_year_combo(years) if years else QComboBox()
         self.year_combo.setEditable(True)
-        self.year_combo.lineEdit().setValidator(QIntValidator(1900, 2100))
+        self.year_combo.lineEdit().setValidator(QIntValidator(2000, 2100))
         self.year_combo.setFixedWidth(120)
-        self.year_combo.currentTextChanged.connect(self._load_year)
+        self.year_combo.currentTextChanged.connect(
+            lambda _: self._refresh_all_calculated()
+        )
         top.addWidget(self.year_combo)
         top.addStretch(1)
         layout.addLayout(top)
@@ -69,7 +295,9 @@ class InsurancePage(QScrollArea):
         self._build_insurance_section(layout)
         self._build_deduction_section(layout)
         self._build_result_section(layout)
+
         self.pension_widget = PensionWidget(self.conn, self.on_change)
+        self.pension_widget.set_salary_payload(self.current_payload())
         layout.addWidget(self.pension_widget)
 
         note = QLabel(
@@ -80,8 +308,6 @@ class InsurancePage(QScrollArea):
         note.setWordWrap(True)
         layout.addWidget(note)
         layout.addStretch(1)
-
-        self._load_year()
 
     def _build_salary_section(self, layout) -> None:
         self.performance_button = make_button("新增绩效")
@@ -217,7 +443,12 @@ class InsurancePage(QScrollArea):
         self.severe_spin = make_money_spin(0.0, 0.0, 1e6)
         self.custom_spin = make_money_spin(0.0, 0.0, 1e6)
 
-        for spin in (self.children_spin, self.infant_spin, self.severe_spin, self.custom_spin):
+        for spin in (
+            self.children_spin,
+            self.infant_spin,
+            self.severe_spin,
+            self.custom_spin,
+        ):
             spin.valueChanged.connect(lambda _: self._refresh_all_calculated())
         for combo in (
             self.elderly_combo,
@@ -229,13 +460,12 @@ class InsurancePage(QScrollArea):
                 lambda _: self._refresh_all_calculated()
             )
 
-        region_widgets = [
+        col = 0
+        for title, widget in (
             ("省/直辖市", self.province_combo),
             ("市", self.city_combo),
             ("区/县", self.district_combo),
-        ]
-        col = 0
-        for title, widget in region_widgets:
+        ):
             grid.addWidget(QLabel(title), 0, col)
             grid.addWidget(widget, 0, col + 1)
             col += 2
@@ -358,17 +588,17 @@ class InsurancePage(QScrollArea):
         try:
             return int(float(self.year_combo.currentText().strip()))
         except ValueError:
-            return 2026
+            return int(self.payload.get("year") or 2026)
 
-    def _current_year_id(self) -> int:
-        return repository.ensure_year(self.conn, self._current_year())
-
-    def _load_year(self) -> None:
-        year_id = self._current_year_id()
-        params = repository.get_insurance_params(self.conn, year_id) or {}
+    def _load(self) -> None:
+        params = salary_service.params(self.payload)
         self._loading = True
         try:
-            self.base_spin.setValue(float(params.get("monthly_salary") or 12266.0))
+            index = self.year_combo.findData(self._current_year())
+            if index < 0:
+                index = self.year_combo.findText(str(self._current_year()))
+            self.year_combo.setCurrentIndex(max(0, index))
+            self.base_spin.setValue(float(params.get("monthly_salary") or 0.0))
             self.thirteen_coef_spin.setValue(
                 float(params.get("thirteenth_coefficient") or 1.0)
             )
@@ -386,13 +616,13 @@ class InsurancePage(QScrollArea):
 
             self.items_table.blockSignals(True)
             self.items_table.setRowCount(0)
-            for item in repository.list_insurance_items(self.conn, year_id):
+            for item in salary_service.items(self.payload):
                 self._append_item_row(item)
             self.items_table.blockSignals(False)
 
             self.salary_table.blockSignals(True)
             self.salary_table.setRowCount(0)
-            for item in repository.list_salary_items(self.conn, year_id):
+            for item in salary_service.salary_items(self.payload):
                 self._append_salary_row(
                     str(item.get("item_type") or "performance"), item
                 )
@@ -410,8 +640,7 @@ class InsurancePage(QScrollArea):
         combo.setCurrentIndex(max(0, index))
 
     def _load_tax_params(self) -> None:
-        year_id = self._current_year_id()
-        params = repository.get_tax_params(self.conn, year_id) or tax_service.default_tax_params()
+        params = salary_service.tax_params(self.payload)
         province = str(params.get("rent_province") or "")
         city = str(params.get("rent_city") or "")
         tier = float(params.get("rent_tier") or 0.0)
@@ -425,7 +654,9 @@ class InsurancePage(QScrollArea):
         try:
             province_index = self.province_combo.findData(province)
             if city and (province_index < 0 or not province):
-                found_province, found_city, found_tier = self._find_city_data(city, tier)
+                found_province, found_city, found_tier = self._find_city_data(
+                    city, tier
+                )
                 if found_province:
                     province = found_province
                     city = found_city
@@ -472,7 +703,9 @@ class InsurancePage(QScrollArea):
             severe_annual = float(params.get("severe_illness_annual") or 0.0)
             self.severe_combo.setCurrentIndex(1 if severe_annual > 0 else 0)
             self.severe_spin.setValue(severe_annual)
-            self.custom_spin.setValue(float(params.get("custom_deduction") or 0.0))
+            self.custom_spin.setValue(
+                float(params.get("custom_deduction") or 0.0)
+            )
             self._set_frequency(
                 self.bonus_method_combo,
                 str(params.get("bonus_tax_method") or "separate"),
@@ -492,7 +725,7 @@ class InsurancePage(QScrollArea):
                 ):
                     return province, name, city_tier
         if tier > 0:
-            return InsurancePage._find_city_by_tier(tier)
+            return SalaryProfileTab._find_city_by_tier(tier)
         return "", "", 0.0
 
     @staticmethod
@@ -570,8 +803,16 @@ class InsurancePage(QScrollArea):
             values = [
                 item.get("name", "") if item else "自定义险种",
                 f"{float(item.get('base') or 0):.2f}" if item else "0",
-                f"{float(item.get('personal_rate') or 0) * 100:.2f}" if item else "0",
-                f"{float(item.get('company_rate') or 0) * 100:.2f}" if item else "0",
+                (
+                    f"{float(item.get('personal_rate') or 0) * 100:.2f}"
+                    if item
+                    else "0"
+                ),
+                (
+                    f"{float(item.get('company_rate') or 0) * 100:.2f}"
+                    if item
+                    else "0"
+                ),
                 (
                     f"{float(item['personal_fixed']):.2f}"
                     if item and item.get("personal_fixed") is not None
@@ -633,7 +874,9 @@ class InsurancePage(QScrollArea):
             )
             amount_item.setTextAlignment(Qt.AlignCenter)
             self.salary_table.setItem(row, 2, amount_item)
-            frequency = str(item.get("frequency") or "monthly") if item else "monthly"
+            frequency = (
+                str(item.get("frequency") or "monthly") if item else "monthly"
+            )
             combo = self._frequency_combo(frequency)
             combo.currentIndexChanged.connect(
                 lambda _: self._refresh_all_calculated()
@@ -680,9 +923,13 @@ class InsurancePage(QScrollArea):
         combo = self.salary_table.cellWidget(row, 3)
         return {
             "item_type": (
-                "subsidy" if type_item and type_item.text() == "补贴" else "performance"
+                "subsidy"
+                if type_item and type_item.text() == "补贴"
+                else "performance"
             ),
-            "name": self.salary_table.item(row, 1).text().strip() or "自定义",
+            "name": (
+                self.salary_table.item(row, 1).text().strip() or "自定义"
+            ),
             "amount": _parse_float(self.salary_table.item(row, 2).text()),
             "frequency": combo.currentData() if combo else "monthly",
         }
@@ -692,39 +939,33 @@ class InsurancePage(QScrollArea):
         return {
             "name": self.items_table.item(row, 0).text().strip(),
             "base": _parse_float(self.items_table.item(row, 1).text()),
-            "personal_rate": _parse_float(self.items_table.item(row, 2).text()) / 100.0,
-            "company_rate": _parse_float(self.items_table.item(row, 3).text()) / 100.0,
-            "personal_fixed": _parse_float(fixed_text) if fixed_text else None,
+            "personal_rate": (
+                _parse_float(self.items_table.item(row, 2).text()) / 100.0
+            ),
+            "company_rate": (
+                _parse_float(self.items_table.item(row, 3).text()) / 100.0
+            ),
+            "personal_fixed": (
+                _parse_float(fixed_text) if fixed_text else None
+            ),
         }
 
     def _salary_params(self) -> dict:
-        return {
-            "base": 0.0,
-            "monthly_salary": float(self.base_spin.value()),
-            "thirteenth_month_months": 1.0,
-            "year_end_bonus_months": 1.0,
-            "thirteenth_coefficient": float(self.thirteen_coef_spin.value()),
-            "thirteenth_frequency": self.thirteen_freq_combo.currentData(),
-            "year_end_bonus_coefficient": float(self.bonus_coef_spin.value()),
-            "year_end_bonus_frequency": self.bonus_freq_combo.currentData(),
-            "thirteenth_amount": 0.0,
-            "year_end_bonus_amount": 0.0,
-            "housing_subsidy": 0.0,
-            "housing_fund_personal_rate": 0.0,
-            "housing_fund_company_rate": 0.0,
-            "pension_personal_rate": 0.0,
-            "pension_company_rate": 0.0,
-            "medical_personal_rate": 0.0,
-            "medical_company_rate": 0.0,
-            "big_medical_personal": 0.0,
-            "big_medical_company": 0.0,
-            "maternity_personal_rate": 0.0,
-            "maternity_company_rate": 0.0,
-            "injury_personal_rate": 0.0,
-            "injury_company_rate": 0.0,
-            "unemployment_personal_rate": 0.0,
-            "unemployment_company_rate": 0.0,
-        }
+        params = salary_service.default_params()
+        params.update(
+            {
+                "monthly_salary": float(self.base_spin.value()),
+                "thirteenth_coefficient": float(
+                    self.thirteen_coef_spin.value()
+                ),
+                "thirteenth_frequency": self.thirteen_freq_combo.currentData(),
+                "year_end_bonus_coefficient": float(
+                    self.bonus_coef_spin.value()
+                ),
+                "year_end_bonus_frequency": self.bonus_freq_combo.currentData(),
+            }
+        )
+        return params
 
     def _items_from_table(self) -> list[dict]:
         items = []
@@ -732,18 +973,7 @@ class InsurancePage(QScrollArea):
             name = self.items_table.item(row, 0).text().strip()
             if not name:
                 continue
-            fixed_text = self.items_table.item(row, 4).text().strip()
-            items.append(
-                {
-                    "name": name,
-                    "base": _parse_float(self.items_table.item(row, 1).text()),
-                    "personal_rate": _parse_float(self.items_table.item(row, 2).text()) / 100.0,
-                    "company_rate": _parse_float(self.items_table.item(row, 3).text()) / 100.0,
-                    "personal_fixed": (
-                        _parse_float(fixed_text) if fixed_text else None
-                    ),
-                }
-            )
+            items.append(self._item_from_row(row))
         return items
 
     def _salary_items_from_table(self) -> list[dict]:
@@ -755,60 +985,63 @@ class InsurancePage(QScrollArea):
             items.append(self._salary_item_from_row(row))
         return items
 
+    def current_payload(self) -> dict:
+        return {
+            "year": self._current_year(),
+            "params": self._salary_params(),
+            "items": self._items_from_table(),
+            "salary_items": self._salary_items_from_table(),
+            "tax_params": self._tax_params_from_form(),
+        }
+
     def _save_salary(self) -> None:
-        year_id = self._current_year_id()
-        repository.upsert_insurance_params(self.conn, year_id, self._salary_params())
-        repository.replace_salary_items(
-            self.conn, year_id, self._salary_items_from_table()
-        )
-        self.conn.commit()
-        self._refresh_all_calculated()
+        self._save_payload()
         flash_saved(self.salary_save_button)
-        self.on_change()
 
     def _save_insurance(self) -> None:
-        year_id = self._current_year_id()
-        repository.upsert_insurance_params(self.conn, year_id, self._salary_params())
-        repository.replace_insurance_items(self.conn, year_id, self._items_from_table())
-        self.conn.commit()
-        self._refresh_all_calculated()
+        self._save_payload()
         flash_saved(self.items_save_button)
-        self.on_change()
 
     def _save_deduction(self) -> None:
-        year_id = self._current_year_id()
-        repository.upsert_tax_params(self.conn, year_id, self._tax_params_from_form())
-        self.conn.commit()
-        self._refresh_all_calculated()
+        self._save_payload()
         flash_saved(self.deduction_save_button)
-        self.on_change()
+
+    def _save_payload(self) -> None:
+        payload = self.current_payload()
+        repository.save_salary_profile(
+            self.conn,
+            self.profile_id,
+            self.profile_name,
+            payload["year"],
+            payload,
+        )
+        self.conn.commit()
+        self.pension_widget.set_salary_payload(payload)
 
     def _on_insurance_changed(self, *_args) -> None:
         self._refresh_all_calculated()
         self._resize_items_table()
 
     def _refresh_all_calculated(self) -> None:
-        if self._loading:
+        if self._loading or not hasattr(self, "result_labels"):
             return
-        if not hasattr(self, "result_labels"):
-            return
-        result = calculations.social_insurance_from_data(
-            self._salary_params(),
-            self._items_from_table(),
-            self._salary_items_from_table(),
-        )
+        payload = self.current_payload()
+        social = salary_service.social_result(payload)
         values = {
-            "total_salary": money(result["total_salary"]),
-            "personal_total": money(result["personal_total"]),
-            "company_total": money(result["company_total"]),
-            "gross_income": money(result["gross_income"]),
-            "total_package": money(result["total_package"]),
+            "total_salary": money(social["total_salary"]),
+            "personal_total": money(social["personal_total"]),
+            "company_total": money(social["company_total"]),
+            "gross_income": money(social["gross_income"]),
+            "total_package": money(social["total_package"]),
         }
         for key, text in values.items():
             self.result_labels[key].setText(text)
 
-        actual = tax_service.monthly_schedule_actual(
-            self.conn, self._current_year_id(), self.bonus_method_combo.currentData()
+        actual = tax_service.monthly_schedule_profile(
+            self.conn,
+            payload["year"],
+            payload,
+            self.bonus_method_combo.currentData(),
         )
         actual_values = {
             "total_income": money(actual["total_income"]),
@@ -895,7 +1128,7 @@ class InsurancePage(QScrollArea):
             grid.addWidget(button, row, 2)
         return value
 
-    def _formula_button(self, key: str):
+    def _formula_button(self, key: str) -> QPushButton | None:
         if not self._formula_enabled:
             return None
         button = make_button("查看公式")
@@ -939,11 +1172,6 @@ class InsurancePage(QScrollArea):
             "monthly_net": "月均税后收入 = 全年税后收入 ÷ 12",
         }
         return texts.get(key, key)
-
-    def refresh(self) -> None:
-        self._load_year()
-        if hasattr(self, "pension_widget"):
-            self.pension_widget.refresh()
 
 
 def _parse_float(text: str) -> float:

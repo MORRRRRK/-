@@ -23,6 +23,13 @@ class SchemaTest(unittest.TestCase):
         self.assertIn("ai_reports", tables)
         self.assertIn("tax_params", tables)
         self.assertIn("salary_items", tables)
+        self.assertIn("salary_profiles", tables)
+        profile = conn.execute(
+            "SELECT name, is_open FROM salary_profiles LIMIT 1"
+        ).fetchone()
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile[0], "默认方案")
+        self.assertEqual(profile[1], 1)
         columns = {
             row[1]
             for row in conn.execute("PRAGMA table_info(monthly_records)")

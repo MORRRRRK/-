@@ -1,12 +1,110 @@
 """SQLite 数据访问层。"""
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any, Iterable
 
 
 def list_years(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute("SELECT * FROM years ORDER BY year")]
+
+
+def list_salary_profiles(
+    conn: sqlite3.Connection, include_closed: bool = True
+) -> list[dict[str, Any]]:
+    sql = "SELECT * FROM salary_profiles"
+    if not include_closed:
+        sql += " WHERE is_open = 1"
+    sql += " ORDER BY is_open DESC, sort_order, id"
+    return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+def list_open_salary_profiles(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return list_salary_profiles(conn, include_closed=False)
+
+
+def get_salary_profile(
+    conn: sqlite3.Connection, profile_id: int
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT * FROM salary_profiles WHERE id = ?", (profile_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def add_salary_profile(
+    conn: sqlite3.Connection,
+    name: str,
+    year: int,
+    payload: dict[str, Any] | None = None,
+    is_open: int = 1,
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO salary_profiles(name, year, is_open, sort_order, payload)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            name,
+            int(year),
+            is_open,
+            int(
+                conn.execute(
+                    "SELECT COALESCE(MAX(sort_order), 0) FROM salary_profiles"
+                ).fetchone()[0]
+                + 1
+            ),
+            json.dumps(payload or {}, ensure_ascii=False),
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def save_salary_profile(
+    conn: sqlite3.Connection,
+    profile_id: int,
+    name: str,
+    year: int,
+    payload: dict[str, Any],
+) -> None:
+    conn.execute(
+        """
+        UPDATE salary_profiles SET
+          name = ?, year = ?, payload = ?,
+          updated_at = datetime('now', 'localtime')
+        WHERE id = ?
+        """,
+        (
+            str(name or "工资方案"),
+            int(year),
+            json.dumps(payload, ensure_ascii=False),
+            profile_id,
+        ),
+    )
+
+
+def set_salary_profile_open(
+    conn: sqlite3.Connection, profile_id: int, is_open: int
+) -> None:
+    conn.execute(
+        "UPDATE salary_profiles SET is_open = ? WHERE id = ?",
+        (1 if is_open else 0, profile_id),
+    )
+
+
+def delete_salary_profile(conn: sqlite3.Connection, profile_id: int) -> None:
+    conn.execute("DELETE FROM salary_profiles WHERE id = ?", (profile_id,))
+
+
+def ensure_open_salary_profile(conn: sqlite3.Connection) -> dict[str, Any]:
+    """至少保留一个打开的工资方案；没有时用默认空方案创建一个。"""
+    profiles = list_open_salary_profiles(conn)
+    if profiles:
+        return profiles[0]
+    profile_id = add_salary_profile(conn, "默认方案", 2026, {})
+    conn.commit()
+    return get_salary_profile(conn, profile_id)  # type: ignore[return-value]
 
 
 def ensure_year(conn: sqlite3.Connection, year: int) -> int:
@@ -315,20 +413,30 @@ def list_holdings(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def get_holding(
+    conn: sqlite3.Connection, holding_id: int
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT * FROM holdings WHERE id = ?", (holding_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def add_holding(conn: sqlite3.Connection, holding: dict[str, Any]) -> int:
     cur = conn.execute(
         """
         INSERT INTO holdings (
-          category, channel, name, holding_value, holding_profit, cumulative_profit,
+          account_id, category, channel, name, holding_value, holding_profit, cumulative_profit,
           return_rate, cost_basis, invest_plan, invest_time, note,
           symbol, asset_type, shares, last_price, price_time
         ) VALUES (
-          :category, :channel, :name, :holding_value, :holding_profit, :cumulative_profit,
+          :account_id, :category, :channel, :name, :holding_value, :holding_profit, :cumulative_profit,
           :return_rate, :cost_basis, :invest_plan, :invest_time, :note,
           :symbol, :asset_type, :shares, :last_price, :price_time
         )
         """,
         {
+            "account_id": holding.get("account_id"),
             "category": holding.get("category", ""),
             "channel": holding.get("channel", ""),
             "name": holding.get("name", ""),
@@ -354,6 +462,7 @@ def update_holding(conn: sqlite3.Connection, holding_id: int, holding: dict[str,
     conn.execute(
         """
         UPDATE holdings SET
+          account_id = COALESCE(:account_id, account_id),
           category = :category, channel = :channel, name = :name,
           holding_value = :holding_value, holding_profit = :holding_profit,
           cumulative_profit = :cumulative_profit, return_rate = :return_rate,
@@ -367,7 +476,7 @@ def update_holding(conn: sqlite3.Connection, holding_id: int, holding: dict[str,
             **{
                 k: holding.get(k)
                 for k in (
-                    "category", "channel", "name", "holding_value", "holding_profit",
+                    "account_id", "category", "channel", "name", "holding_value", "holding_profit",
                     "cumulative_profit", "return_rate", "cost_basis", "invest_plan",
                     "invest_time", "note", "symbol", "asset_type", "shares",
                     "last_price", "price_time",
@@ -549,12 +658,13 @@ def add_gold_account(conn: sqlite3.Connection, account: dict[str, Any]) -> int:
     cur = conn.execute(
         """
         INSERT INTO gold_accounts(
-          name, channel, grams, cost_basis, last_price, price_time, note
+          account_id, name, channel, grams, cost_basis, last_price, price_time, note
         ) VALUES (
-          :name, :channel, :grams, :cost_basis, :last_price, :price_time, :note
+          :account_id, :name, :channel, :grams, :cost_basis, :last_price, :price_time, :note
         )
         """,
         {
+            "account_id": account.get("account_id"),
             "name": account.get("name", ""),
             "channel": account.get("channel", ""),
             "grams": float(account.get("grams", 0.0) or 0.0),
@@ -573,6 +683,7 @@ def update_gold_account(
     conn.execute(
         """
         UPDATE gold_accounts SET
+          account_id = COALESCE(:account_id, account_id),
           name = :name, channel = :channel, grams = :grams,
           cost_basis = :cost_basis, last_price = :last_price,
           price_time = :price_time, note = :note
@@ -580,6 +691,7 @@ def update_gold_account(
         """,
         {
             **account,
+            "account_id": account.get("account_id"),
             "id": account_id,
         },
     )
@@ -644,3 +756,50 @@ def add_monthly_image(
 
 def delete_monthly_image(conn: sqlite3.Connection, image_id: int) -> None:
     conn.execute("DELETE FROM monthly_images WHERE id = ?", (image_id,))
+
+
+def list_chat_messages(
+    conn: sqlite3.Connection, limit: int = 0
+) -> list[dict[str, Any]]:
+    sql = "SELECT * FROM ai_chat_messages ORDER BY id DESC"
+    if limit > 0:
+        sql += f" LIMIT {int(limit)}"
+    rows = conn.execute(sql).fetchall()
+    messages = [dict(r) for r in rows]
+    messages.reverse()
+    return messages
+
+
+def add_chat_message(
+    conn: sqlite3.Connection, role: str, content: str
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO ai_chat_messages(role, content) VALUES (?, ?)",
+        (str(role), str(content)),
+    )
+    return int(cur.lastrowid)
+
+
+def clear_chat_messages(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM ai_chat_messages")
+    conn.execute(
+        "INSERT INTO ai_chat_state(id, summary) VALUES (1, '') "
+        "ON CONFLICT(id) DO UPDATE SET summary = '', "
+        "updated_at = datetime('now', 'localtime')"
+    )
+
+
+def get_chat_summary(conn: sqlite3.Connection) -> str:
+    row = conn.execute(
+        "SELECT summary FROM ai_chat_state WHERE id = 1"
+    ).fetchone()
+    return str(row["summary"]) if row else ""
+
+
+def save_chat_summary(conn: sqlite3.Connection, summary: str) -> None:
+    conn.execute(
+        "INSERT INTO ai_chat_state(id, summary) VALUES (1, ?) "
+        "ON CONFLICT(id) DO UPDATE SET summary = ?, "
+        "updated_at = datetime('now', 'localtime')",
+        (str(summary), str(summary)),
+    )

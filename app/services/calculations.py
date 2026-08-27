@@ -68,7 +68,7 @@ def year_summary(conn: sqlite3.Connection, year_id: int) -> dict[str, Any]:
         monthly_expense = trans_expense
         balance = trans_income - trans_expense
     else:
-        balance = income + housing_cost
+        balance = income - housing_cost - monthly_expense
     return {
         "salary": salary,
         "income": income,

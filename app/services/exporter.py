@@ -94,3 +94,67 @@ def export_accounts(conn: sqlite3.Connection, file_path: Path) -> Path:
         writer.writeheader()
         writer.writerows(rows)
     return file_path
+
+
+def export_bluecoins_csv(
+    conn: sqlite3.Connection, start_date: str, end_date: str, file_path: Path
+) -> int:
+    """按 BlueCoins 中文 CSV 格式导出交易记录。"""
+    from . import account_service, transaction_service
+
+    rows = transaction_service.get_transactions(conn, start_date, end_date)
+    categories = {
+        c["id"]: dict(c)
+        for c in conn.execute("SELECT * FROM transaction_categories")
+    }
+    accounts = {
+        a["id"]: a["name"] for a in account_service.get_accounts(conn)
+    }
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with file_path.open("w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(
+            [
+                "类型", "日期", "设置时间", "名称", "金额", "货币", "汇率",
+                "类别组", "类别", "账户", "备注", "标签", "状态",
+            ]
+        )
+        for row in rows:
+            trans_type = {
+                "expense": "支出",
+                "income": "收入",
+                "transfer": "转账",
+            }.get(row["type"], row["type"])
+            amount = abs(float(row["amount"] or 0))
+            if trans_type == "支出":
+                signed = -amount
+            elif trans_type == "收入":
+                signed = amount
+            else:
+                signed = float(row["amount"] or 0)
+            category = categories.get(row["category_id"])
+            group_name = ""
+            if category:
+                if category.get("parent_id"):
+                    parent = categories.get(category["parent_id"]) or {}
+                    group_name = parent.get("name", "")
+                else:
+                    group_name = category.get("name", "")
+            writer.writerow(
+                [
+                    trans_type,
+                    row["trans_date"],
+                    row.get("created_at") or row["trans_date"],
+                    row["merchant"],
+                    f"{signed:.2f}",
+                    "CNY",
+                    "1",
+                    group_name,
+                    category.get("name", "") if category else "",
+                    accounts.get(row["account_id"], ""),
+                    row["note"],
+                    "",
+                    "",
+                ]
+            )
+    return len(rows)

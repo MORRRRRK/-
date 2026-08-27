@@ -31,7 +31,6 @@ from ..services.importer import MigrationError, import_xlsx
 from .update_worker import UpdateCheckWorker, UpdateInstallWorker
 from .sync_worker import CloudSyncWorker
 from .pages.about import AboutPage
-from .pages.accounts import AccountsPage
 from .pages.holdings import HoldingsPage
 from .pages.insurance import InsurancePage
 from .pages.overview import OverviewPage
@@ -79,7 +78,6 @@ class MainWindow(QMainWindow):
         for name in [
             "资产总览",
             "记账流水",
-            "账户管理",
             "工资管理",
             "持仓管理",
             "资产规划",
@@ -99,7 +97,6 @@ class MainWindow(QMainWindow):
         self.pages = [
             OverviewPage(self.db.conn),
             TransactionsPage(self.db.conn, self.refresh_all),
-            AccountsPage(self.db.conn, self.refresh_all),
             InsurancePage(self.db.conn, self.refresh_all),
             HoldingsPage(self.db.conn, self.refresh_all),
             PlanningPage(self.db.conn, self.refresh_all),

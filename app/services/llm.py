@@ -8,6 +8,7 @@ import urllib.request
 from typing import Any
 
 from ..core import repository
+from . import salary as salary_service
 
 
 class LlmError(Exception):
@@ -103,16 +104,19 @@ def build_financial_context(conn: sqlite3.Connection) -> dict[str, Any]:
         for item in repository.get_large_items(conn, year["id"]):
             large_items.append({"year": year["year"], **item})
     insurance = []
-    for year in years:
-        params = repository.get_insurance_params(conn, year["id"])
-        if params:
-            insurance.append(
-                {
-                    "year": year["year"],
-                    "params": params,
-                    "items": repository.list_insurance_items(conn, year["id"]),
-                }
-            )
+    for profile in repository.list_salary_profiles(conn):
+        payload = salary_service.decode_payload(profile.get("payload"))
+        insurance.append(
+            {
+                "profile_id": profile["id"],
+                "name": profile["name"],
+                "year": profile["year"],
+                "params": salary_service.params(payload),
+                "items": salary_service.items(payload),
+                "salary_items": salary_service.salary_items(payload),
+                "tax_params": salary_service.tax_params(payload),
+            }
+        )
     return {
         "totals": calculations_totals(conn),
         "investment_summary": calculations_investment(conn),

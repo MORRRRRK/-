@@ -1,4 +1,6 @@
-SCHEMA_VERSION = 12
+import json
+
+SCHEMA_VERSION = 14
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS years (
@@ -82,6 +84,7 @@ CREATE TABLE IF NOT EXISTS tax_params (
 
 CREATE TABLE IF NOT EXISTS holdings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
   category TEXT NOT NULL CHECK(category IN ('基金', '黄金', '股票')),
   channel TEXT NOT NULL DEFAULT '',
   name TEXT NOT NULL,
@@ -144,6 +147,7 @@ CREATE TABLE IF NOT EXISTS invest_executions (
 
 CREATE TABLE IF NOT EXISTS gold_accounts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   channel TEXT NOT NULL DEFAULT '',
   grams REAL NOT NULL DEFAULT 0,
@@ -235,6 +239,30 @@ CREATE TABLE IF NOT EXISTS ai_reports (
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
+CREATE TABLE IF NOT EXISTS salary_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL DEFAULT '工资方案',
+  year INTEGER NOT NULL DEFAULT 2026,
+  is_open INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  payload TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS ai_chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS ai_chat_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  summary TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -263,10 +291,97 @@ def apply_schema(conn) -> None:
     _ensure_columns(conn)
     _backfill_salary_coefficients(conn)
     _migrate_utilities_to_expense(conn)
+    _migrate_salary_profiles(conn)
+    _migrate_holdings_accounts(conn)
     seed_insurance_items(conn)
     _seed_categories(conn)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
+
+
+def _migrate_salary_profiles(conn) -> None:
+    """V4.4：把旧的按年份工资数据迁移成独立的工资方案。"""
+    if conn.execute("SELECT 1 FROM salary_profiles LIMIT 1").fetchone():
+        return
+    row = conn.execute(
+        """
+        SELECT sp.year_id, y.year FROM social_insurance_params sp
+        JOIN years y ON y.id = sp.year_id
+        ORDER BY y.year DESC LIMIT 1
+        """
+    ).fetchone()
+    if row:
+        year_id, year = row["year_id"], int(row["year"])
+        params = dict(conn.execute(
+            "SELECT * FROM social_insurance_params WHERE year_id = ?", (year_id,)
+        ).fetchone())
+        params.pop("id", None)
+        params.pop("year_id", None)
+        items = [dict(r) for r in conn.execute(
+            "SELECT * FROM insurance_items WHERE year_id = ? ORDER BY sort_order, id",
+            (year_id,),
+        ).fetchall()]
+        salary_items = [dict(r) for r in conn.execute(
+            "SELECT * FROM salary_items WHERE year_id = ? ORDER BY sort_order, id",
+            (year_id,),
+        ).fetchall()]
+        tax = conn.execute(
+            "SELECT * FROM tax_params WHERE year_id = ?", (year_id,)
+        ).fetchone()
+        tax_params = dict(tax) if tax else {}
+        tax_params.pop("id", None)
+        tax_params.pop("year_id", None)
+        payload = {
+            "year": year,
+            "params": params,
+            "items": items,
+            "salary_items": salary_items,
+            "tax_params": tax_params,
+        }
+    else:
+        year = 2026
+        payload = {
+            "year": year,
+            "params": {},
+            "items": [],
+            "salary_items": [],
+            "tax_params": {},
+        }
+    conn.execute(
+        """
+        INSERT INTO salary_profiles(name, year, is_open, sort_order, payload)
+        VALUES (?, ?, 1, 0, ?)
+        """,
+        ("默认方案", year, json.dumps(payload, ensure_ascii=False)),
+    )
+
+
+def _migrate_holdings_accounts(conn) -> None:
+    """V4.4.1：把持仓/黄金账户的渠道自动转成账户并关联。"""
+    for table in ("holdings", "gold_accounts"):
+        rows = conn.execute(
+            f"SELECT id, channel FROM {table} "
+            "WHERE channel != '' AND account_id IS NULL"
+        ).fetchall()
+        for row in rows:
+            name = str(row["channel"]).strip()
+            if not name:
+                continue
+            account = conn.execute(
+                "SELECT id FROM accounts WHERE name = ?", (name,)
+            ).fetchone()
+            if account:
+                account_id = account["id"]
+            else:
+                account_id = conn.execute(
+                    "INSERT INTO accounts(name, type, current_balance) "
+                    "VALUES (?, 'investment', 0)",
+                    (name,),
+                ).lastrowid
+            conn.execute(
+                f"UPDATE {table} SET account_id = ? WHERE id = ?",
+                (account_id, row["id"]),
+            )
 
 
 def _seed_categories(conn) -> None:
@@ -354,6 +469,17 @@ def _ensure_columns(conn) -> None:
     for name, definition in holding_adds.items():
         if name not in holding_columns:
             conn.execute(f"ALTER TABLE holdings ADD COLUMN {name} {definition}")
+    if "account_id" not in holding_columns:
+        conn.execute(
+            "ALTER TABLE holdings ADD COLUMN account_id INTEGER "
+            "REFERENCES accounts(id) ON DELETE SET NULL"
+        )
+    gold_columns = {row[1] for row in conn.execute("PRAGMA table_info(gold_accounts)")}
+    if "account_id" not in gold_columns:
+        conn.execute(
+            "ALTER TABLE gold_accounts ADD COLUMN account_id INTEGER "
+            "REFERENCES accounts(id) ON DELETE SET NULL"
+        )
 
 
 def _backfill_salary_coefficients(conn) -> None:

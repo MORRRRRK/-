@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QScrollArea,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -25,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from ...core import repository
 from ...edition import is_customer
-from ...services import calculations
+from ...services import account_service, calculations
 from ...services.eastmoney import EastMoneyError, search_fund
 from ...services.gold import GoldPriceError, fetch_gold_price
 from ...services.investing import run_scheduled_investments
@@ -40,6 +41,8 @@ from ..widgets import (
     money,
     pct,
 )
+from .accounts import AccountDialog
+from .holdings_chat import HoldingsChatPanel
 
 ASSET_TYPES = [
     ("股票 (A股)", "stock"),
@@ -70,7 +73,7 @@ GOLD_FORMULA_TEXT = (
 )
 
 
-class HoldingsPage(QScrollArea):
+class HoldingsPage(QWidget):
     def __init__(self, conn, on_change):
         super().__init__()
         self.conn = conn
@@ -83,15 +86,22 @@ class HoldingsPage(QScrollArea):
         self._deleted_gold: list[dict] = []
         self._gold_reference_price: float | None = None
         self._formula_enabled = not is_customer()
-        self.setWidgetResizable(True)
         self._content = QWidget()
-        self.setWidget(self._content)
         self._build()
 
     def _build(self) -> None:
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._left_scroll = QScrollArea()
+        self._left_scroll.setWidgetResizable(True)
+        self._left_scroll.setWidget(self._content)
+
         layout = QVBoxLayout(self._content)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
+
+        self._build_accounts_section(layout)
 
         top = QHBoxLayout()
         top.addWidget(QLabel("分类筛选"))
@@ -100,11 +110,11 @@ class HoldingsPage(QScrollArea):
         self.filter_combo.currentTextChanged.connect(self._reload_table)
         self.filter_combo.setFixedWidth(100)
         top.addWidget(self.filter_combo)
-        top.addWidget(QLabel("渠道筛选"))
-        self.channel_combo = QComboBox()
-        self.channel_combo.currentTextChanged.connect(self._reload_table)
-        self.channel_combo.setMinimumWidth(140)
-        top.addWidget(self.channel_combo)
+        top.addWidget(QLabel("账户筛选"))
+        self.account_combo = QComboBox()
+        self.account_combo.currentIndexChanged.connect(self._reload_table)
+        self.account_combo.setMinimumWidth(140)
+        top.addWidget(self.account_combo)
         top.addStretch(1)
         self.summary_label = QLabel("")
         self.summary_label.setObjectName("summaryValue")
@@ -205,11 +215,136 @@ class HoldingsPage(QScrollArea):
         layout.addWidget(gold_section)
         layout.addStretch(1)
 
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.addWidget(self._left_scroll)
+        self.chat_panel = HoldingsChatPanel(self.conn, self.on_change)
+        self.splitter.addWidget(self.chat_panel)
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 2)
+        self.splitter.setSizes([900, 420])
+        page_layout.addWidget(self.splitter, 1)
+
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self._refresh_market(show_popup=False))
         self.timer.start(60_000)
         self.refresh()
         QTimer.singleShot(1200, lambda: self._refresh_market(show_popup=False))
+
+    def _build_accounts_section(self, layout) -> None:
+        section = Section("账户管理（先建立账户，才能在持仓列表中选择）")
+        buttons = QHBoxLayout()
+        self.account_add_button = make_button("新增账户", primary=True)
+        self.account_edit_button = make_button("编辑账户")
+        self.account_delete_button = make_button("删除账户")
+        self.account_add_button.clicked.connect(self._add_account)
+        self.account_edit_button.clicked.connect(self._edit_account)
+        self.account_delete_button.clicked.connect(self._delete_account)
+        buttons.addWidget(self.account_add_button)
+        buttons.addWidget(self.account_edit_button)
+        buttons.addWidget(self.account_delete_button)
+        buttons.addStretch(1)
+        section.add_layout(buttons)
+
+        self.accounts_table = QTableWidget(0, 5)
+        self.accounts_table.setHorizontalHeaderLabels(
+            ["名称", "类型", "机构", "当前余额", "备注"]
+        )
+        self.accounts_table.verticalHeader().setVisible(False)
+        self.accounts_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Stretch
+        )
+        self.accounts_table.doubleClicked.connect(
+            lambda _: self._edit_account()
+        )
+        self.accounts_table.setMinimumHeight(4 * 32 + 34)
+        section.add(self.accounts_table)
+        layout.addWidget(section)
+
+    def _reload_accounts(self) -> None:
+        accounts = account_service.get_accounts(self.conn)
+        self._account_ids = [a["id"] for a in accounts]
+        self.accounts_table.setRowCount(len(accounts))
+        type_names = {
+            "cash": "现金", "bank": "银行卡", "alipay": "支付宝",
+            "wechat": "微信", "investment": "投资账户",
+            "credit_card": "信用卡", "loan": "贷款", "other": "其他",
+        }
+        for r, account in enumerate(accounts):
+            values = [
+                account["name"],
+                type_names.get(account["type"], account["type"]),
+                account["institution"],
+                money(account["current_balance"]),
+                account["note"],
+            ]
+            for c, text in enumerate(values):
+                item = QTableWidgetItem(str(text))
+                item.setTextAlignment(
+                    Qt.AlignRight | Qt.AlignVCenter
+                    if c == 3
+                    else Qt.AlignCenter
+                )
+                self.accounts_table.setItem(r, c, item)
+
+        current = self.account_combo.currentData()
+        self.account_combo.blockSignals(True)
+        self.account_combo.clear()
+        self.account_combo.addItem("全部账户", None)
+        for account in accounts:
+            self.account_combo.addItem(account["name"], account["id"])
+        index = self.account_combo.findData(current)
+        self.account_combo.setCurrentIndex(max(0, index))
+        self.account_combo.blockSignals(False)
+
+    def _selected_account_id(self) -> int | None:
+        row = self.accounts_table.currentRow()
+        if 0 <= row < len(self._account_ids):
+            return self._account_ids[row]
+        return None
+
+    def _add_account(self) -> None:
+        dialog = AccountDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        account_service.add_account(self.conn, **dialog.values())
+        self.conn.commit()
+        self.refresh()
+        self.on_change()
+
+    def _edit_account(self) -> None:
+        account_id = self._selected_account_id()
+        if account_id is None:
+            QMessageBox.information(self, "提示", "请先选择账户")
+            return
+        account = account_service.get_account(self.conn, account_id)
+        dialog = AccountDialog(self, account)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        account_service.update_account(
+            self.conn, account_id, **dialog.values()
+        )
+        self.conn.commit()
+        self.refresh()
+        self.on_change()
+
+    def _delete_account(self) -> None:
+        account_id = self._selected_account_id()
+        if account_id is None:
+            QMessageBox.information(self, "提示", "请先选择账户")
+            return
+        account = account_service.get_account(self.conn, account_id)
+        if not confirm_delete(
+            self, "删除账户", f"确定删除账户“{account['name']}”？"
+        ):
+            return
+        try:
+            account_service.delete_account(self.conn, account_id)
+        except ValueError as exc:
+            QMessageBox.warning(self, "无法删除", str(exc))
+            return
+        self.conn.commit()
+        self.refresh()
+        self.on_change()
 
     def _append_row(self, holding: dict | None = None) -> None:
         row = self.table.rowCount()
@@ -224,17 +359,24 @@ class HoldingsPage(QScrollArea):
         self.table.setCellWidget(row, 0, category_combo)
 
         channel_combo = QComboBox()
-        channel_combo.setEditable(True)
-        channel_combo.addItems(
-            ["支付宝", "中信建投", "银河证券", "中国建设银行", "博时基金", "浙商银行"]
-        )
-        channel_combo.setCurrentText(holding["channel"] if holding else "")
+        for account in account_service.get_accounts(self.conn):
+            channel_combo.addItem(account["name"], account["id"])
+        if holding:
+            if holding.get("account_id"):
+                index = channel_combo.findData(holding["account_id"])
+                channel_combo.setCurrentIndex(max(0, index))
+            else:
+                channel_combo.setCurrentText(holding.get("channel") or "")
         self.table.setCellWidget(row, 1, channel_combo)
 
         name_item = QTableWidgetItem(holding["name"] if holding else "")
         self.table.setItem(row, 2, name_item)
-        symbol_item = QTableWidgetItem(holding["symbol"] if holding else "")
-        self.table.setItem(row, 3, symbol_item)
+        symbol_edit = QLineEdit(holding["symbol"] if holding else "")
+        symbol_edit.setAlignment(Qt.AlignCenter)
+        symbol_edit.returnPressed.connect(
+            lambda _row=row: self._auto_fill_symbol(_row)
+        )
+        self.table.setCellWidget(row, 3, symbol_edit)
 
         asset_combo = QComboBox()
         asset_combo.setEditable(True)
@@ -302,12 +444,16 @@ class HoldingsPage(QScrollArea):
     def _reload_table(self) -> None:
         holdings = repository.list_holdings(self.conn)
         category = self.filter_combo.currentText()
-        channel = self.channel_combo.currentText()
+        account_id = (
+            self.account_combo.currentData()
+            if self.account_combo.count()
+            else None
+        )
         filtered = [
             h
             for h in holdings
             if category in ("全部", h["category"])
-            and (channel in ("全部渠道", h["channel"]))
+            and (account_id is None or h.get("account_id") == account_id)
         ]
         self._rows = []
         self._row_ids = []
@@ -318,6 +464,13 @@ class HoldingsPage(QScrollArea):
         self.table.resizeColumnsToContents()
 
     def _add_row(self) -> None:
+        if not account_service.get_accounts(self.conn):
+            QMessageBox.information(
+                self,
+                "提示",
+                "请先在“账户管理”创建一个账户，再添加持仓。",
+            )
+            return
         self._append_row()
         self.table.setCurrentCell(self.table.rowCount() - 1, 2)
 
@@ -358,8 +511,10 @@ class HoldingsPage(QScrollArea):
                 continue
             base = dict(self._rows[row])
             category = self.table.cellWidget(row, 0).currentText().strip()
-            channel = self.table.cellWidget(row, 1).currentText().strip()
-            symbol = self.table.item(row, 3).text().strip()
+            channel_combo = self.table.cellWidget(row, 1)
+            channel = channel_combo.currentText().strip()
+            account_id = channel_combo.currentData()
+            symbol = self.table.cellWidget(row, 3).text().strip()
             asset_type = self.table.cellWidget(row, 4).currentData() or self.table.cellWidget(
                 row, 4
             ).currentText().strip()
@@ -375,6 +530,7 @@ class HoldingsPage(QScrollArea):
 
             update = {
                 **base,
+                "account_id": account_id,
                 "category": category,
                 "channel": channel,
                 "name": name,
@@ -406,22 +562,21 @@ class HoldingsPage(QScrollArea):
             f"累计收益 {money(invest['total_cumulative'])}  |  "
             f"总收益率 {pct(invest['total_rate'])}"
         )
-        current = self.channel_combo.currentText()
-        channels = sorted(
-            {h["channel"] for h in repository.list_holdings(self.conn) if h["channel"]}
-        )
-        self.channel_combo.blockSignals(True)
-        self.channel_combo.clear()
-        self.channel_combo.addItem("全部渠道")
-        self.channel_combo.addItems(channels)
-        index = self.channel_combo.findText(current)
-        self.channel_combo.setCurrentIndex(max(0, index))
-        self.channel_combo.blockSignals(False)
+        self._reload_accounts()
         self._reload_table()
         self._reload_gold()
 
     def _reload_gold(self) -> None:
         accounts = repository.list_gold_accounts(self.conn)
+        account_id = (
+            self.account_combo.currentData()
+            if self.account_combo.count()
+            else None
+        )
+        if account_id is not None:
+            accounts = [
+                a for a in accounts if a.get("account_id") == account_id
+            ]
         self._gold_rows = []
         self._gold_ids = []
         self.gold_table.setRowCount(0)
@@ -438,8 +593,16 @@ class HoldingsPage(QScrollArea):
 
         name_item = QTableWidgetItem(account["name"] if account else "")
         self.gold_table.setItem(row, 0, name_item)
-        channel_item = QTableWidgetItem(account["channel"] if account else "")
-        self.gold_table.setItem(row, 1, channel_item)
+        channel_combo = QComboBox()
+        for item in account_service.get_accounts(self.conn):
+            channel_combo.addItem(item["name"], item["id"])
+        if account:
+            if account.get("account_id"):
+                index = channel_combo.findData(account["account_id"])
+                channel_combo.setCurrentIndex(max(0, index))
+            else:
+                channel_combo.setCurrentText(account.get("channel") or "")
+        self.gold_table.setCellWidget(row, 1, channel_combo)
 
         grams_item = QTableWidgetItem(
             f"{float(account['grams'] or 0.0):.4f}" if account else ""
@@ -521,7 +684,12 @@ class HoldingsPage(QScrollArea):
             update.update(
                 {
                     "name": name,
-                    "channel": self.gold_table.item(row, 1).text().strip(),
+                    "account_id": self.gold_table.cellWidget(
+                        row, 1
+                    ).currentData(),
+                    "channel": self.gold_table.cellWidget(
+                        row, 1
+                    ).currentText().strip(),
                     "grams": _parse_decimal(self.gold_table.item(row, 2).text()),
                     "last_price": (
                         float(self.gold_table.item(row, 3).text().strip())
@@ -612,7 +780,7 @@ class HoldingsPage(QScrollArea):
                 return
             if fallback:
                 code = fallback[0]["code"]
-                self.table.item(row, 3).setText(code)
+                self.table.cellWidget(row, 3).setText(code)
                 index = self.table.cellWidget(row, 4).findData("fund_otc")
                 self.table.cellWidget(row, 4).setCurrentIndex(index)
                 QMessageBox.information(
@@ -625,7 +793,9 @@ class HoldingsPage(QScrollArea):
             return
         if len(candidates) == 1:
             candidate = candidates[0]
-            self.table.item(row, 3).setText(candidate.get("thscode", ""))
+            self.table.cellWidget(row, 3).setText(
+                candidate.get("thscode", "")
+            )
             mapped = _asset_type_from_candidate(candidate.get("asset_type", ""))
             if mapped:
                 index = self.table.cellWidget(row, 4).findData(mapped)
@@ -642,6 +812,68 @@ class HoldingsPage(QScrollArea):
             for item in candidates[:10]
         )
         QMessageBox.information(self, "请手动选择", "匹配到多个代码：\n" + lines)
+
+    def _auto_fill_symbol(self, row: int) -> None:
+        """按代码自动填充名称、资产类型与净值（回车触发）。"""
+        client = self._market_client()
+        if client is None:
+            return
+        symbol = self.table.cellWidget(row, 3).text().strip()
+        if not symbol:
+            QMessageBox.information(self, "提示", "请先填写代码")
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            candidates = client.search_ticker(symbol)
+        except MarketError as exc:
+            QMessageBox.warning(self, "自动填充失败", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not candidates:
+            QMessageBox.information(
+                self,
+                "未找到",
+                f"未找到代码 {symbol} 的行情信息，请检查代码格式。",
+            )
+            return
+        candidate = candidates[0]
+        name = str(candidate.get("name") or "")
+        thscode = str(candidate.get("thscode") or symbol)
+        asset_type = _asset_type_from_candidate(
+            str(candidate.get("asset_type") or "")
+        )
+        if name:
+            self.table.item(row, 2).setText(name)
+        self.table.cellWidget(row, 3).setText(thscode)
+        if asset_type:
+            index = self.table.cellWidget(row, 4).findData(asset_type)
+            if index >= 0:
+                self.table.cellWidget(row, 4).setCurrentIndex(index)
+        else:
+            asset_type = (
+                self.table.cellWidget(row, 4).currentData()
+                or {
+                    "股票": "stock",
+                    "黄金": "gold_etf",
+                    "基金": "fund_exchange",
+                }.get(self.table.cellWidget(row, 0).currentText(), "")
+            )
+        try:
+            price, _ = fetch_live_price(client, asset_type, thscode)
+        except MarketError as exc:
+            QMessageBox.information(
+                self,
+                "已填充基础信息",
+                f"名称/类型已自动填充，但净值获取失败：{exc}",
+            )
+            return
+        self.table.item(row, 5).setText(f"{price:.4f}")
+        QMessageBox.information(
+            self,
+            "自动填充完成",
+            f"{name or thscode}：净值 {money(price)}",
+        )
 
     def _fetch_or_resolve(
         self, client: MarketClient, holding: dict
