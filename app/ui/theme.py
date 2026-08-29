@@ -55,21 +55,25 @@ def apply_theme(window: QMainWindow, conn) -> None:
     colors = _theme_colors(dark)
     style = """
         QMainWindow, QWidget { background: __BG__; color: __TEXT__; }
-        QListWidget#nav {
+        QTreeWidget#nav {
             background: __NAV_BG__;
             color: __NAV_TEXT__;
             border: none;
             font-size: 14px;
             padding-top: 10px;
         }
-        QListWidget#nav::item {
+        QTreeWidget#nav::item {
             height: 44px;
             padding-left: 18px;
             border: none;
         }
-        QListWidget#nav::item:selected {
+        QTreeWidget#nav::item:selected {
             background: __ACCENT__;
             color: white;
+        }
+        QTreeWidget#nav::branch {
+            background: transparent;
+            border: none;
         }
         QFrame#card {
             background: __PANEL__;

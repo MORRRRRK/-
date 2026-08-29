@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "个人财务软件系统架构",
+    "subtitle": "Windows 桌面版 + 手机互联 + 外部服务",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/MORRRRRK/-",
+      "revision": "48e79c355b4d8f23b595af0457e2780ca0e9ab16"
+    },
+    "views": [
+      {
+        "id": "desktop-flow",
+        "label": "桌面端主路径",
+        "focus": ["desktop", "ui", "core", "db"],
+        "note": "桌面端录入、计算与本地存储的主路径。"
+      },
+      {
+        "id": "mobile-link",
+        "label": "手机互联",
+        "focus": ["mobile", "sync", "web", "core"],
+        "note": "手机端通过同步服务与局域网只读 Web 访问数据。"
+      },
+      {
+        "id": "external-services",
+        "label": "外部服务",
+        "focus": ["market", "llm", "cloud", "release"],
+        "note": "行情、大模型、坚果云与 GitHub 更新依赖。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "desktop",
+      "type": "external",
+      "label": "个人用户",
+      "sublabel": "Windows 桌面版",
+      "pos": [40, 180],
+      "size": [130, 60]
+    },
+    {
+      "id": "mobile",
+      "type": "external",
+      "label": "手机端",
+      "sublabel": "App / 局域网浏览器",
+      "pos": [40, 420],
+      "size": [130, 60]
+    },
+    {
+      "id": "ui",
+      "type": "frontend",
+      "label": "桌面界面",
+      "sublabel": "PySide6 页面",
+      "pos": [240, 180],
+      "size": [150, 70],
+      "sources": [
+        { "path": "app/ui/main_window.py", "label": "主窗口" },
+        { "path": "app/ui/pages/overview.py", "label": "资产总览" }
+      ]
+    },
+    {
+      "id": "core",
+      "type": "backend",
+      "label": "业务服务层",
+      "sublabel": "计算 · 工资 · 税务 · 持仓 · 规划 · 报告",
+      "pos": [470, 180],
+      "size": [170, 80],
+      "sources": [
+        { "path": "app/services/calculations.py", "label": "汇总计算" },
+        { "path": "app/services/tax.py", "label": "个税与工资" }
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "SQLite",
+      "sublabel": "data/finance.db + 图片/导出/备份",
+      "pos": [720, 180],
+      "size": [160, 70],
+      "sources": [
+        { "path": "app/core/schema.py", "label": "表结构与迁移" },
+        { "path": "app/core/repository.py", "label": "数据访问" }
+      ]
+    },
+    {
+      "id": "sync",
+      "type": "backend",
+      "label": "同步服务端",
+      "sublabel": "finance-server",
+      "pos": [240, 420],
+      "size": [150, 60],
+      "sources": [
+        { "path": "app/services/server_sync.py", "label": "互联同步" }
+      ]
+    },
+    {
+      "id": "web",
+      "type": "backend",
+      "label": "局域网只读 Web",
+      "sublabel": "手机/浏览器查看",
+      "pos": [470, 420],
+      "size": [150, 60],
+      "sources": [
+        { "path": "app/services/web_server.py", "label": "HTTP 服务" }
+      ]
+    },
+    {
+      "id": "market",
+      "type": "external",
+      "label": "行情接口",
+      "sublabel": "同花顺 · 东财 · 实时金价",
+      "pos": [950, 70],
+      "size": [160, 60],
+      "sources": [
+        { "path": "app/services/market.py", "label": "同花顺客户端" }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "大模型 API",
+      "sublabel": "智能报告 · 持仓问答",
+      "pos": [950, 180],
+      "size": [160, 60],
+      "sources": [
+        { "path": "app/services/llm.py", "label": "OpenAI 兼容接口" }
+      ]
+    },
+    {
+      "id": "cloud",
+      "type": "external",
+      "label": "坚果云 WebDAV",
+      "sublabel": "加密云同步",
+      "pos": [950, 290],
+      "size": [160, 60],
+      "sources": [
+        { "path": "app/services/cloud_sync.py", "label": "WebDAV 同步" }
+      ]
+    },
+    {
+      "id": "release",
+      "type": "external",
+      "label": "GitHub Releases",
+      "sublabel": "客户版在线更新",
+      "pos": [950, 400],
+      "size": [160, 60],
+      "sources": [
+        { "path": "app/services/updater.py", "label": "更新检查" },
+        { "path": "app/services/release.py", "label": "发布打包" }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Windows 本地程序",
+      "wraps": ["ui", "core", "db", "web"],
+      "pad": 18
+    },
+    {
+      "kind": "region",
+      "label": "外部服务",
+      "wraps": ["market", "llm", "cloud", "release"],
+      "pad": 18
+    }
+  ],
+  "connections": [
+    { "id": "desktop-to-ui", "from": "desktop", "to": "ui", "label": "操作录入", "variant": "emphasis" },
+    { "id": "ui-to-core", "from": "ui", "to": "core", "label": "调用服务", "variant": "emphasis" },
+    { "id": "core-to-db", "from": "core", "to": "db", "label": "SQLite 读写" },
+    { "id": "core-to-market", "from": "core", "to": "market", "label": "实时行情 / 定投" },
+    { "id": "core-to-llm", "from": "core", "to": "llm", "label": "报告 / 问答" },
+    { "id": "core-to-cloud", "from": "core", "to": "cloud", "label": "加密同步" },
+    { "id": "core-to-release", "from": "core", "to": "release", "label": "更新检查" },
+    { "id": "mobile-to-sync", "from": "mobile", "to": "sync", "label": "账号 / 数据同步", "variant": "emphasis" },
+    { "id": "sync-to-core", "from": "sync", "to": "core", "label": "双向同步", "variant": "dashed" },
+    { "id": "mobile-to-web", "from": "mobile", "to": "web", "label": "局域网只读", "variant": "dashed" },
+    { "id": "web-to-db", "from": "web", "to": "db", "label": "只读查询" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "桌面端",
+      "items": [
+        "PySide6 中文界面 + 业务服务层",
+        "SQLite 单库保存流水、工资、持仓与计划",
+        "图片凭证、导出、备份随 data 目录整体迁移"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "手机互联",
+      "items": [
+        "手机 App 通过同步服务端与桌面双向同步",
+        "局域网只读 Web 可查看总览与流水",
+        "Web 端只读，不修改数据库"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "外部服务",
+      "items": [
+        "同花顺 / 东财行情与实时金价",
+        "大模型生成账单、工资、规划报告",
+        "坚果云加密备份，GitHub Releases 在线更新"
+      ]
+    }
+  ]
+}

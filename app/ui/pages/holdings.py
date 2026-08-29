@@ -25,13 +25,13 @@ from PySide6.QtWidgets import (
 )
 
 from ...core import repository
+from ...core.paths import db_path
 from ...edition import is_customer
 from ...services import account_service, calculations
 from ...services.eastmoney import EastMoneyError, search_fund
-from ...services.gold import GoldPriceError, fetch_gold_price
-from ...services.investing import run_scheduled_investments
 from ...services import investing
 from ...services.market import MarketClient, MarketError, fetch_live_price
+from ...services.market_refresh import MarketRefreshWorker
 from ..widgets import (
     Section,
     confirm_delete,
@@ -85,6 +85,7 @@ class HoldingsPage(QWidget):
         self._gold_ids: list[int | None] = []
         self._deleted_gold: list[dict] = []
         self._gold_reference_price: float | None = None
+        self._refresh_worker: MarketRefreshWorker | None = None
         self._formula_enabled = not is_customer()
         self._content = QWidget()
         self._build()
@@ -161,6 +162,7 @@ class HoldingsPage(QWidget):
             info="直接在表格中修改，点右上角“保存修改”后全部生效",
         )
         self.table = QTableWidget(0, 15)
+        self.table._enter_save = True
         self.table.setHorizontalHeaderLabels(
             [
                 "类别", "渠道", "名称", "代码", "资产类型", "净值", "份额",
@@ -186,7 +188,7 @@ class HoldingsPage(QWidget):
         self.gold_undo_button = make_button("撤销删除")
         self.gold_save_button = make_button("保存黄金账户", primary=True)
         self.gold_refresh_button.clicked.connect(
-            lambda: self._refresh_gold_prices(show_popup=True)
+            lambda: self._refresh_market(show_popup=True)
         )
         self.gold_add_button.clicked.connect(self._add_gold_row)
         self.gold_delete_button.clicked.connect(self._delete_gold_row)
@@ -210,6 +212,7 @@ class HoldingsPage(QWidget):
         gold_section.add_layout(gold_top)
 
         self.gold_table = QTableWidget(0, 8)
+        self.gold_table._enter_save = True
         self.gold_table.setHorizontalHeaderLabels(
             ["名称", "渠道", "克数", "参考金价", "当前市值", "成本", "收益", "备注"]
         )
@@ -381,6 +384,7 @@ class HoldingsPage(QWidget):
         name_item = QTableWidgetItem(holding["name"] if holding else "")
         self.table.setItem(row, 2, name_item)
         symbol_edit = QLineEdit(holding["symbol"] if holding else "")
+        symbol_edit._enter_save = False
         symbol_edit.setAlignment(Qt.AlignCenter)
         symbol_edit.returnPressed.connect(
             lambda _row=row: self._auto_fill_symbol(_row)
@@ -575,6 +579,27 @@ class HoldingsPage(QWidget):
         self._reload_table()
         self._reload_gold()
 
+    def save(self) -> None:
+        """全局保存：根据当前焦点保存持仓列表或黄金账户。"""
+        focus = QApplication.focusWidget()
+        if _widget_in_table(focus, self.gold_table):
+            self._save_gold()
+        else:
+            self._save_all()
+
+    def undo(self) -> None:
+        """全局撤销：优先恢复最近删除的黄金账户，其次恢复持仓。"""
+        if self._deleted_gold:
+            self._undo_gold_delete()
+        elif self._deleted_holdings:
+            self._undo_delete()
+
+    def shutdown(self) -> None:
+        """退出前停止后台行情刷新，避免线程在进程退出时仍运行。"""
+        if self._refresh_worker is not None and self._refresh_worker.isRunning():
+            self._refresh_worker.cancel()
+            self._refresh_worker.wait(5000)
+
     def _reload_gold(self) -> None:
         accounts = repository.list_gold_accounts(self.conn)
         account_id = (
@@ -716,30 +741,6 @@ class HoldingsPage(QWidget):
         self.conn.commit()
         flash_saved(self.gold_save_button)
         self._reload_gold()
-
-    def _refresh_gold_prices(self, show_popup: bool = True) -> None:
-        try:
-            price, date_text = fetch_gold_price()
-        except GoldPriceError as exc:
-            if show_popup:
-                QMessageBox.warning(self, "金价刷新失败", str(exc))
-            return
-        self._gold_reference_price = price
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        self.gold_price_label.setText(
-            f"实时金价：{money(price)} 元/克（{date_text or now}）"
-        )
-        for account in repository.list_gold_accounts(self.conn):
-            update = dict(account)
-            update["last_price"] = price
-            update["price_time"] = date_text or now
-            repository.update_gold_account(self.conn, account["id"], update)
-        self.conn.commit()
-        self._reload_gold()
-        if show_popup:
-            QMessageBox.information(
-                self, "金价刷新完成", f"实时金价：{money(price)} 元/克"
-            )
 
     def _market_client(self, silent: bool = False) -> MarketClient | None:
         api_key = repository.get_setting(self.conn, "hithink_api_key", "")
@@ -884,105 +885,38 @@ class HoldingsPage(QWidget):
             f"{name or thscode}：净值 {money(price)}",
         )
 
-    def _fetch_or_resolve(
-        self, client: MarketClient, holding: dict
-    ) -> tuple[float, str, dict]:
-        """拉取行情；失败时尝试修正 6 位基金代码与资产类型后重试。"""
-        symbol = (holding.get("symbol") or "").strip()
-        asset_type = holding.get("asset_type") or ""
-        if not asset_type:
-            asset_type = {
-                "股票": "stock",
-                "黄金": "gold_etf",
-                "基金": "fund_exchange",
-            }.get(holding.get("category"), "")
-        try:
-            price, price_time = fetch_live_price(client, asset_type, symbol)
-            return price, price_time, holding
-        except MarketError:
-            name = str(holding.get("name") or "").strip()
-            if not symbol or not name:
-                raise
-            if asset_type in ("stock", "") and symbol.isdigit() and len(symbol) == 6:
-                try:
-                    candidates = search_fund(name)
-                except EastMoneyError:
-                    candidates = []
-                if candidates:
-                    code = candidates[0]["code"]
-                    update = dict(holding)
-                    update["symbol"] = code
-                    update["asset_type"] = "fund_otc"
-                    repository.update_holding(self.conn, holding["id"], update)
-                    resolved = {**holding, "symbol": code, "asset_type": "fund_otc"}
-                    price, price_time = fetch_live_price(client, "fund_otc", code)
-                    return price, price_time, resolved
-            raise
-
     def _refresh_market(self, show_popup: bool = True) -> None:
-        client = self._market_client(silent=not show_popup)
-        if client is None:
+        if self._refresh_worker is not None and self._refresh_worker.isRunning():
+            if show_popup:
+                QMessageBox.information(self, "提示", "正在刷新行情，请稍候")
             return
-        holdings = repository.list_holdings(self.conn)
-        updated = 0
-        failed = []
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            for holding in holdings:
-                symbol = (holding.get("symbol") or "").strip()
-                if not symbol:
-                    failed.append(f"{holding['name']}：未填写代码")
-                    continue
-                asset_type = holding.get("asset_type") or ""
-                if not asset_type:
-                    asset_type = {
-                        "股票": "stock",
-                        "黄金": "gold_etf",
-                        "基金": "fund_exchange",
-                    }.get(holding.get("category"), "")
-                if not asset_type:
-                    failed.append(f"{holding['name']}：未设置资产类型")
-                    continue
-                try:
-                    price, _, resolved_holding = self._fetch_or_resolve(
-                        client, holding
-                    )
-                except MarketError as exc:
-                    failed.append(f"{holding['name']}：{exc}")
-                    continue
-                if not price:
-                    failed.append(f"{holding['name']}：接口未返回价格")
-                    continue
-                now = datetime.now().strftime("%Y-%m-%d %H:%M")
-                update = dict(resolved_holding)
-                update["last_price"] = price
-                update["price_time"] = now
-                shares = float(holding.get("shares") or 0)
-                if shares > 0:
-                    new_value = round(shares * price, 2)
-                    update["holding_value"] = new_value
-                    cost = holding.get("cost_basis")
-                    if cost is not None and float(cost or 0) > 0:
-                        update["holding_profit"] = round(new_value - float(cost), 2)
-                    update["return_rate"] = (
-                        float(update.get("cumulative_profit") or 0) / new_value
-                        if new_value
-                        else 0.0
-                    )
-                repository.update_holding(self.conn, holding["id"], update)
-                updated += 1
-            try:
-                executed = run_scheduled_investments(self.conn, client)
-            except Exception as exc:
-                failed.append(f"定投：{exc}")
-                executed = []
-            self._refresh_gold_prices(show_popup=False)
-        finally:
-            QApplication.restoreOverrideCursor()
-        self.conn.commit()
+        api_key = repository.get_setting(
+            self.conn, "hithink_api_key", ""
+        ).strip()
+        self.summary_label.setText("正在后台刷新实时行情…")
+        worker = MarketRefreshWorker(str(db_path()), api_key, self)
+        worker.finished.connect(
+            lambda result: self._on_market_refreshed(result, show_popup)
+        )
+        self._refresh_worker = worker
+        worker.start()
+
+    def _on_market_refreshed(self, result: dict, show_popup: bool) -> None:
+        self._refresh_worker = None
+        gold_price = result.get("gold_price")
+        if gold_price:
+            self._gold_reference_price = float(gold_price)
+            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+            self.gold_price_label.setText(
+                f"实时金价：{money(float(gold_price))} 元/克"
+                f"（{result.get('gold_date') or now}）"
+            )
         self.refresh()
         self.on_change()
         if show_popup:
+            updated = int(result.get("updated") or 0)
+            failed = result.get("failed") or []
+            executed = result.get("executed") or []
             message = f"刷新完成：成功 {updated} 条"
             if executed:
                 message += "\n今日定投：" + "、".join(executed)
@@ -999,6 +933,15 @@ class HoldingsPage(QWidget):
             self.conn, self._row_ids[row], self.refresh, self
         )
         dialog.exec()
+
+def _widget_in_table(widget, table) -> bool:
+    current = widget
+    while current is not None:
+        if current is table:
+            return True
+        current = current.parentWidget()
+    return False
+
 
 def _format_decimal(value, decimals: int = 2) -> str:
     if value is None or value == "":

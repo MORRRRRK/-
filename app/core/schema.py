@@ -1,6 +1,6 @@
 import json
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS years (
@@ -281,6 +281,8 @@ CREATE TABLE IF NOT EXISTS spending_plan_items (
   planned_amount REAL NOT NULL DEFAULT 0,
   manual_actual REAL NOT NULL DEFAULT 0,
   note TEXT NOT NULL DEFAULT '',
+  completed INTEGER NOT NULL DEFAULT 0,
+  voucher_path TEXT NOT NULL DEFAULT '',
   sort_order INTEGER NOT NULL DEFAULT 0
 );
 
@@ -513,6 +515,19 @@ def _ensure_columns(conn) -> None:
         conn.execute(
             "ALTER TABLE gold_accounts ADD COLUMN account_id INTEGER "
             "REFERENCES accounts(id) ON DELETE SET NULL"
+        )
+    spending_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(spending_plan_items)")
+    }
+    if "completed" not in spending_columns:
+        conn.execute(
+            "ALTER TABLE spending_plan_items "
+            "ADD COLUMN completed INTEGER NOT NULL DEFAULT 0"
+        )
+    if "voucher_path" not in spending_columns:
+        conn.execute(
+            "ALTER TABLE spending_plan_items "
+            "ADD COLUMN voucher_path TEXT NOT NULL DEFAULT ''"
         )
 
 

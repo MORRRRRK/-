@@ -22,16 +22,12 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.paths import exports_dir
-from ...core import repository
 from ...services import account_service, exporter, importer, transaction_service
 from ..widgets import (
     Section,
     TransactionDialog,
     confirm_delete,
-    flash_saved,
     make_button,
-    make_money_spin,
-    make_year_combo,
     money,
 )
 
@@ -133,6 +129,7 @@ class TransactionsPage(QScrollArea):
 
         section = Section("交易记录")
         self.table = QTableWidget(0, 8)
+        self.table.setMinimumHeight(20 * 32 + 34)
         self.table.setHorizontalHeaderLabels(
             ["日期", "类型", "分类", "商家", "账户", "备注", "金额", "可报销"]
         )
@@ -146,58 +143,10 @@ class TransactionsPage(QScrollArea):
         self.summary_label.setObjectName("summaryValue")
         layout.addWidget(self.summary_label)
 
-        self._build_deposit_section(layout)
         self.refresh()
 
-    def _build_deposit_section(self, layout) -> None:
-        section = Section(
-            "每月强制存款",
-            info="独立维护，表面按支出记录，实际计入累计存款",
-        )
-        top = QHBoxLayout()
-        top.addWidget(QLabel("年份"))
-        years = sorted(
-            {
-                int(y["year"])
-                for y in repository.list_years(self.conn)
-                if int(y["year"]) >= 2000
-            }
-            | {QDate.currentDate().year()}
-        )
-        self.deposit_year_combo = (
-            make_year_combo(years) if years else QComboBox()
-        )
-        self.deposit_year_combo.currentIndexChanged.connect(
-            lambda _: self._load_deposits()
-        )
-        top.addWidget(self.deposit_year_combo)
-        self.deposit_save_button = make_button("保存强制存款", primary=True)
-        self.deposit_save_button.clicked.connect(self._save_deposits)
-        top.addWidget(self.deposit_save_button)
-        top.addStretch(1)
-        section.add_layout(top)
-
-        self.deposit_table = QTableWidget(12, 2)
-        self.deposit_table.setHorizontalHeaderLabels(["月份", "强制存款"])
-        self.deposit_table.verticalHeader().setVisible(False)
-        self.deposit_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.Stretch
-        )
-        self.deposit_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.deposit_spins: dict[int, QWidget] = {}
-        for month in range(1, 13):
-            month_item = QTableWidgetItem(f"{month} 月")
-            month_item.setTextAlignment(Qt.AlignCenter)
-            self.deposit_table.setItem(month - 1, 0, month_item)
-            spin = make_money_spin(0.0, 0.0, 1e8)
-            self.deposit_spins[month] = spin
-            self.deposit_table.setCellWidget(month - 1, 1, spin)
-        self.deposit_table.setMinimumHeight(12 * 32 + 34)
-        section.add(self.deposit_table)
-        layout.addWidget(section)
-
     def _select_month(self, month: int) -> None:
-        year = self._deposit_year()
+        year = QDate.currentDate().year()
         first = QDate(year, month, 1)
         self.start_date.setDate(first)
         self.end_date.setDate(first.addMonths(1).addDays(-1))
@@ -207,40 +156,6 @@ class TransactionsPage(QScrollArea):
         self.start_date.setDate(QDate(2000, 1, 1))
         self.end_date.setDate(QDate(2099, 12, 31))
         self.refresh()
-
-    def _deposit_year(self) -> int:
-        if hasattr(self, "deposit_year_combo"):
-            data = self.deposit_year_combo.currentData()
-            if data:
-                return int(data)
-        return QDate.currentDate().year()
-
-    def _load_deposits(self) -> None:
-        if not hasattr(self, "deposit_spins"):
-            return
-        year = self._deposit_year()
-        year_id = repository.ensure_year(self.conn, year)
-        records = repository.get_monthly_records(self.conn, year_id)
-        for month in range(1, 13):
-            rec = records.get(month, {})
-            self.deposit_spins[month].setValue(
-                float(rec.get("forced_deposit", 0.0) or 0.0)
-            )
-
-    def _save_deposits(self) -> None:
-        year = self._deposit_year()
-        year_id = repository.ensure_year(self.conn, year)
-        records = repository.get_monthly_records(self.conn, year_id)
-        rows = []
-        for month in range(1, 13):
-            rec = dict(records.get(month) or {"month": month})
-            rec["month"] = month
-            rec["forced_deposit"] = float(self.deposit_spins[month].value())
-            rows.append(rec)
-        repository.upsert_monthly_records(self.conn, year_id, rows)
-        self.conn.commit()
-        flash_saved(self.deposit_save_button)
-        self.on_change()
 
     def _export_bluecoins(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
@@ -313,7 +228,6 @@ class TransactionsPage(QScrollArea):
         self.summary_label.setText(
             f"收入 {money(income)}  支出 {money(expense)}  结余 {money(income - expense)}"
         )
-        self._load_deposits()
 
     def _add(self, trans_type: str) -> None:
         start = self.start_date.date()

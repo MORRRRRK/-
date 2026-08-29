@@ -26,7 +26,6 @@ from ...services import llm, server_sync
 from ...services.release import DEFAULT_CODE_REPO
 from ...edition import is_customer
 from ..widgets import (
-    InfoIcon,
     NoWheelSpinBox,
     Section,
     confirm_delete,
@@ -74,6 +73,7 @@ class SettingsPage(QScrollArea):
         self.conn = conn
         self.on_settings_changed = on_settings_changed
         self.on_cloud_action = on_cloud_action
+        self._bulk_saving = False
         self.setWidgetResizable(True)
         self._content = QWidget()
         self.setWidget(self._content)
@@ -228,9 +228,6 @@ class SettingsPage(QScrollArea):
         firewall_row.setContentsMargins(0, 0, 0, 0)
         firewall_row.setSpacing(4)
         firewall_row.addWidget(self.web_firewall_button)
-        firewall_row.addWidget(
-            InfoIcon("开放防火墙需要管理员权限，用于手机访问局域网服务")
-        )
         firewall_row.addStretch(1)
         web_grid.addWidget(firewall_widget, 4, 0)
         web_note = QLabel(
@@ -485,7 +482,7 @@ class SettingsPage(QScrollArea):
         )
         self.conn.commit()
         flash_saved(self.common_save_button)
-        self.on_settings_changed()
+        self._notify_changed()
 
     def _save_server_sync(self) -> None:
         repository.set_setting(
@@ -595,6 +592,23 @@ class SettingsPage(QScrollArea):
         )
         self.conn.commit()
         flash_saved(self.web_save_button)
+        self._notify_changed()
+
+    def _notify_changed(self) -> None:
+        if not self._bulk_saving:
+            self.on_settings_changed()
+
+    def save(self) -> None:
+        """全局保存：一次保存设置页所有模块。"""
+        self._bulk_saving = True
+        try:
+            self._save_common()
+            self._save_llm()
+            self._save_web()
+            self._save_cloud()
+            self._save_server_sync()
+        finally:
+            self._bulk_saving = False
         self.on_settings_changed()
 
     def _save_cloud(self) -> None:

@@ -927,6 +927,15 @@ def list_spending_plan_items(
     return [dict(r) for r in rows]
 
 
+def get_spending_plan_item(
+    conn: sqlite3.Connection, item_id: int
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT * FROM spending_plan_items WHERE id = ?", (item_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def add_spending_plan_item(
     conn: sqlite3.Connection,
     plan_id: int,
@@ -934,6 +943,7 @@ def add_spending_plan_item(
     planned_amount: float = 0.0,
     manual_actual: float = 0.0,
     note: str = "",
+    completed: int = 0,
 ) -> int:
     sort_order = int(
         conn.execute(
@@ -948,8 +958,9 @@ def add_spending_plan_item(
     cur = conn.execute(
         """
         INSERT INTO spending_plan_items(
-          plan_id, name, planned_amount, manual_actual, note, sort_order
-        ) VALUES (?, ?, ?, ?, ?, ?)
+          plan_id, name, planned_amount, manual_actual, note,
+          completed, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             plan_id,
@@ -957,6 +968,7 @@ def add_spending_plan_item(
             float(planned_amount or 0.0),
             float(manual_actual or 0.0),
             str(note or ""),
+            int(completed or 0),
             sort_order,
         ),
     )
@@ -970,11 +982,13 @@ def update_spending_plan_item(
     planned_amount: float = 0.0,
     manual_actual: float = 0.0,
     note: str = "",
+    completed: int = 0,
 ) -> None:
     conn.execute(
         """
         UPDATE spending_plan_items SET
-          name = ?, planned_amount = ?, manual_actual = ?, note = ?
+          name = ?, planned_amount = ?, manual_actual = ?, note = ?,
+          completed = ?
         WHERE id = ?
         """,
         (
@@ -982,8 +996,20 @@ def update_spending_plan_item(
             float(planned_amount or 0.0),
             float(manual_actual or 0.0),
             str(note or ""),
+            int(completed or 0),
             item_id,
         ),
+    )
+
+
+def update_spending_plan_item_voucher(
+    conn: sqlite3.Connection,
+    item_id: int,
+    voucher_path: str,
+) -> None:
+    conn.execute(
+        "UPDATE spending_plan_items SET voucher_path = ? WHERE id = ?",
+        (str(voucher_path or ""), item_id),
     )
 
 
@@ -1001,8 +1027,9 @@ def restore_spending_plan_item(
     cur = conn.execute(
         """
         INSERT INTO spending_plan_items(
-          id, plan_id, name, planned_amount, manual_actual, note, sort_order
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          id, plan_id, name, planned_amount, manual_actual, note,
+          completed, voucher_path, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             int(item["id"]),
@@ -1011,6 +1038,8 @@ def restore_spending_plan_item(
             float(item.get("planned_amount") or 0.0),
             float(item.get("manual_actual") or 0.0),
             item.get("note", ""),
+            int(item.get("completed") or 0),
+            item.get("voucher_path", ""),
             int(item.get("sort_order") or 0),
         ),
     )

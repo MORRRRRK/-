@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QDialog,
     QGridLayout,
@@ -25,7 +26,6 @@ from ...core import repository
 from ...edition import is_customer
 from ...services import salary as salary_service
 from ...services import tax as tax_service
-from ..pension_widget import PensionWidget
 from ..widgets import (
     NoWheelSpinBox,
     Section,
@@ -162,6 +162,16 @@ class InsurancePage(QWidget):
     def refresh(self) -> None:
         self._reload_profiles()
 
+    def save(self) -> None:
+        tab = self.tabs.currentWidget()
+        if isinstance(tab, SalaryProfileTab):
+            tab.save()
+
+    def undo(self) -> None:
+        tab = self.tabs.currentWidget()
+        if isinstance(tab, SalaryProfileTab):
+            tab.undo()
+
 
 class HistoryDialog(QDialog):
     """已收起的工资方案：可恢复，可永久删除。"""
@@ -297,10 +307,6 @@ class SalaryProfileTab(QScrollArea):
         self._build_deduction_section(layout)
         self._build_result_section(layout)
 
-        self.pension_widget = PensionWidget(self.conn, self.on_change)
-        self.pension_widget.set_salary_payload(self.current_payload())
-        layout.addWidget(self.pension_widget)
-
         note = QLabel(
             "工资详情中的绩效、补贴和奖金均可选择按月/按季/按年发放，"
             "总工资按发放频率折算到年度；个税按累计预扣预缴估算。"
@@ -362,6 +368,7 @@ class SalaryProfileTab(QScrollArea):
         section.add_layout(grid)
 
         self.salary_table = QTableWidget(0, 4)
+        self.salary_table._enter_save = True
         self.salary_table.setHorizontalHeaderLabels(
             ["类型", "名称", "金额", "发放频率"]
         )
@@ -395,6 +402,7 @@ class SalaryProfileTab(QScrollArea):
             ],
         )
         self.items_table = QTableWidget(0, 5)
+        self.items_table._enter_save = True
         self.items_table.setHorizontalHeaderLabels(
             ["名称", "基数", "个人比例(%)", "公司比例(%)", "个人固定金额"]
         )
@@ -1026,6 +1034,23 @@ class SalaryProfileTab(QScrollArea):
         self._save_payload()
         flash_saved(self.deduction_save_button)
 
+    def save(self) -> None:
+        """全局保存：根据焦点保存工资详情、N险N金或专项附加扣除。"""
+        focus = QApplication.focusWidget()
+        if _widget_in_table(focus, self.salary_table):
+            self._save_salary()
+        elif _widget_in_table(focus, self.items_table):
+            self._save_insurance()
+        else:
+            self._save_deduction()
+
+    def undo(self) -> None:
+        """全局撤销：优先恢复工资项，其次恢复险种。"""
+        if self._deleted_salary_rows:
+            self._undo_salary_row()
+        elif self._deleted_rows:
+            self._undo_delete_row()
+
     def _save_payload(self) -> None:
         payload = self.current_payload()
         repository.save_salary_profile(
@@ -1036,7 +1061,6 @@ class SalaryProfileTab(QScrollArea):
             payload,
         )
         self.conn.commit()
-        self.pension_widget.set_salary_payload(payload)
 
     def _on_insurance_changed(self, *_args) -> None:
         self._refresh_all_calculated()
@@ -1193,6 +1217,15 @@ class SalaryProfileTab(QScrollArea):
             "monthly_net": "月均税后收入 = 全年税后收入 ÷ 12",
         }
         return texts.get(key, key)
+
+
+def _widget_in_table(widget, table) -> bool:
+    current = widget
+    while current is not None:
+        if current is table:
+            return True
+        current = current.parentWidget()
+    return False
 
 
 def _parse_float(text: str) -> float:

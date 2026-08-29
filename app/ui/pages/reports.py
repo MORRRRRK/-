@@ -381,6 +381,9 @@ class ReportsPage(QScrollArea):
         self._reload_reports()
         self.on_change()
 
+    def undo(self) -> None:
+        self._undo_delete()
+
     def refresh(self) -> None:
         self._reload_reports()
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
-from PySide6.QtWidgets import QAbstractSpinBox
+from PySide6.QtWidgets import QAbstractItemView, QAbstractSpinBox
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDateEdit,
     QDialog,
@@ -12,8 +13,11 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QTableWidget,
+    QTextEdit,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -46,6 +50,7 @@ class NoWheelSpinBox(QDoubleSpinBox):
 
 def make_money_spin(value: float = 0.0, minimum: float = -1e8, maximum: float = 1e8) -> NoWheelSpinBox:
     spin = NoWheelSpinBox()
+    spin._enter_save = True
     spin.setDecimals(2)
     spin.setRange(minimum, maximum)
     spin.setValue(float(value))
@@ -97,7 +102,7 @@ class InfoIcon(QToolButton):
 
 
 def info_label(text: str, tooltip: str) -> QWidget:
-    """把说明文字从括号移到悬停提示，返回“标签 + ?”控件。"""
+    """小标题说明仅保留标签，问号说明只显示在模块大标题上。"""
     widget = QWidget()
     layout = QHBoxLayout(widget)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -105,7 +110,6 @@ def info_label(text: str, tooltip: str) -> QWidget:
     label = QLabel(text)
     label.setObjectName("fieldLabel")
     layout.addWidget(label)
-    layout.addWidget(InfoIcon(tooltip))
     layout.addStretch(1)
     return widget
 
@@ -132,6 +136,96 @@ class WheelGuard(QObject):
         return False
 
 
+class PageShortcutFilter(QObject):
+    """全局快捷键：回车保存当前页内容；Ctrl+Z 在非文本输入处撤销上一步。"""
+
+    def __init__(self, get_page, parent=None):
+        super().__init__(parent)
+        self.get_page = get_page
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() != QEvent.KeyPress:
+            return False
+        key = event.key()
+        modifiers = event.modifiers()
+        if key in (Qt.Key_Return, Qt.Key_Enter) and modifiers in (
+            Qt.NoModifier,
+            Qt.KeypadModifier,
+        ):
+            if QApplication.activeModalWidget() is not None:
+                return False
+            focus = QApplication.focusWidget()
+            page = self.get_page()
+            if focus is None or page is None or not hasattr(page, "save"):
+                return False
+            decision = self._enter_action(focus)
+            if decision == "consume":
+                page.save()
+                return True
+            if decision == "after":
+                QTimer.singleShot(0, page.save)
+            return False
+        if (
+            key == Qt.Key_Z
+            and modifiers & Qt.ControlModifier
+            and not modifiers & (Qt.ShiftModifier | Qt.AltModifier)
+        ):
+            if QApplication.activeModalWidget() is not None:
+                return False
+            focus = QApplication.focusWidget()
+            if focus is None or self._is_text_editor(focus):
+                return False
+            page = self.get_page()
+            if page is not None and hasattr(page, "undo"):
+                page.undo()
+                return True
+        return False
+
+    def _enter_action(self, focus) -> str:
+        if not isinstance(
+            focus, (QLineEdit, QAbstractSpinBox, QAbstractItemView)
+        ):
+            return "skip"
+        if isinstance(focus, QLineEdit):
+            parent_spin = focus.parentWidget()
+            if isinstance(parent_spin, QAbstractSpinBox):
+                return (
+                    "after"
+                    if getattr(parent_spin, "_enter_save", False)
+                    else "skip"
+                )
+            if isinstance(parent_spin, QComboBox):
+                return "skip"
+            flag = getattr(focus, "_enter_save", None)
+            if flag is False:
+                return "skip"
+            if flag is True:
+                return "consume"
+        if isinstance(focus, QAbstractSpinBox):
+            return (
+                "after" if getattr(focus, "_enter_save", False) else "skip"
+            )
+        table = self._find_table(focus)
+        if table is not None and getattr(table, "_enter_save", False):
+            return "after" if isinstance(focus, QLineEdit) else "consume"
+        return "skip"
+
+    @staticmethod
+    def _find_table(widget):
+        current = widget
+        while current is not None:
+            if isinstance(current, QTableWidget):
+                return current
+            current = current.parentWidget()
+        return None
+
+    @staticmethod
+    def _is_text_editor(focus) -> bool:
+        return isinstance(
+            focus, (QLineEdit, QTextEdit, QPlainTextEdit)
+        ) or (isinstance(focus, QComboBox) and focus.isEditable())
+
+
 def confirm_delete(parent, title: str, text: str) -> bool:
     """删除前一次确认，防止误删。"""
     return QMessageBox.question(parent, title, text) == QMessageBox.Yes
@@ -152,8 +246,6 @@ class StatCard(QFrame):
         self.title_label = QLabel(title)
         self.title_label.setObjectName("cardTitle")
         title_row.addWidget(self.title_label)
-        if info:
-            title_row.addWidget(InfoIcon(info))
         title_row.addStretch(1)
         self.value_label = QLabel("0.00")
         self.value_label.setObjectName("cardValue")
@@ -215,6 +307,7 @@ class LabeledRow(QHBoxLayout):
 
 def line_edit(text: str = "", placeholder: str = "") -> QLineEdit:
     edit = QLineEdit(text)
+    edit._enter_save = True
     if placeholder:
         edit.setPlaceholderText(placeholder)
     return edit

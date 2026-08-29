@@ -3,18 +3,20 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QAbstractItemView
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
-    QListWidget,
     QMainWindow,
     QMessageBox,
     QProgressDialog,
     QStackedWidget,
     QTableWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -31,15 +33,18 @@ from ..services.importer import MigrationError, import_xlsx
 from .update_worker import UpdateCheckWorker, UpdateInstallWorker
 from .sync_worker import CloudSyncWorker
 from .pages.about import AboutPage
+from .pages.deposits import DepositsPage
 from .pages.holdings import HoldingsPage
 from .pages.insurance import InsurancePage
 from .pages.overview import OverviewPage
+from .pages.pension import PensionPage
 from .pages.planning import PlanningPage
 from .pages.reports import ReportsPage
 from .pages.settings import SettingsPage
 from .pages.spending_plans import SpendingPlansPage
 from .pages.transactions import TransactionsPage
 from .theme import apply_theme
+from .widgets import PageShortcutFilter
 
 
 class MainWindow(QMainWindow):
@@ -65,6 +70,12 @@ class MainWindow(QMainWindow):
         self.refresh_all()
         self._apply_style()
         self._apply_web_settings()
+        self._page_filter = PageShortcutFilter(
+            lambda: self.stack.currentWidget(), self
+        )
+        QApplication.instance().installEventFilter(self._page_filter)
+        self._save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        self._save_shortcut.activated.connect(self._global_save)
         QTimer.singleShot(3000, self._startup_cloud_sync)
 
     def _build_ui(self) -> None:
@@ -73,22 +84,12 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        self.nav = QListWidget()
+        self.nav = QTreeWidget()
         self.nav.setObjectName("nav")
+        self.nav.setHeaderHidden(True)
         self.nav.setFixedWidth(168)
-        for name in [
-            "资产总览",
-            "记账流水",
-            "工资管理",
-            "持仓管理",
-            "资产规划",
-            "消费计划",
-            "智能报告",
-            "设置",
-            "关于",
-        ]:
-            self.nav.addItem(name)
-        self.nav.currentRowChanged.connect(self._switch_page)
+        self.nav.setIndentation(12)
+        self.nav.currentItemChanged.connect(self._on_nav_changed)
 
         self.stack = QStackedWidget()
         self.reports_page = ReportsPage(self.db.conn, self.refresh_all)
@@ -99,7 +100,9 @@ class MainWindow(QMainWindow):
         self.pages = [
             OverviewPage(self.db.conn),
             TransactionsPage(self.db.conn, self.refresh_all),
+            DepositsPage(self.db.conn, self.refresh_all),
             InsurancePage(self.db.conn, self.refresh_all),
+            PensionPage(self.db.conn, self.refresh_all),
             HoldingsPage(self.db.conn, self.refresh_all),
             PlanningPage(self.db.conn, self.refresh_all),
             SpendingPlansPage(self.db.conn, self.refresh_all),
@@ -109,17 +112,89 @@ class MainWindow(QMainWindow):
         ]
         for page in self.pages:
             self.stack.addWidget(page)
+        self._build_nav()
 
         root.addWidget(self.nav)
         root.addWidget(self.stack, 1)
         self.setCentralWidget(central)
         self._apply_row_selection(self)
-        self.nav.setCurrentRow(0)
+        self._select_nav(0)
         QTimer.singleShot(2000, self._startup_update_check)
 
-    def _switch_page(self, index: int) -> None:
+    def _build_nav(self) -> None:
+        self._nav_leaf_items: list[QTreeWidgetItem] = []
+
+        def leaf(text: str, index: int) -> QTreeWidgetItem:
+            item = QTreeWidgetItem([text])
+            item.setData(0, Qt.UserRole, index)
+            self._nav_leaf_items.append(item)
+            return item
+
+        def branch(text: str, children: list[QTreeWidgetItem]) -> QTreeWidgetItem:
+            item = QTreeWidgetItem([text])
+            item.setData(0, Qt.UserRole, None)
+            for child in children:
+                item.addChild(child)
+            return item
+
+        overview = leaf("资产总览", 0)
+        ledger = branch(
+            "记账流水",
+            [leaf("交易记录", 1), leaf("每月强制存款", 2)],
+        )
+        salary = branch(
+            "工资管理",
+            [leaf("工资计算", 3), leaf("退休金测算", 4)],
+        )
+        holdings = leaf("持仓管理", 5)
+        planning = leaf("资产规划", 6)
+        spending = leaf("消费计划", 7)
+        reports = leaf("智能报告", 8)
+        settings = leaf("设置", 9)
+        about = leaf("关于", 10)
+        for item in (overview, ledger, salary, holdings, planning,
+                     spending, reports, settings, about):
+            self.nav.addTopLevelItem(item)
+        ledger.setExpanded(True)
+        salary.setExpanded(True)
+
+    def _select_nav(self, index: int) -> None:
+        if 0 <= index < len(self._nav_leaf_items):
+            self.nav.setCurrentItem(self._nav_leaf_items[index])
+
+    def _on_nav_changed(self, current, _previous) -> None:
+        if current is None:
+            return
+        index = current.data(0, Qt.UserRole)
+        if index is None:
+            self.nav.expandItem(current)
+            if current.childCount():
+                self.nav.setCurrentItem(current.child(0))
+            return
         if 0 <= index < self.stack.count():
             self.stack.setCurrentIndex(index)
+
+    def _global_save(self) -> None:
+        page = self.stack.currentWidget()
+        if page is not None and hasattr(page, "save"):
+            page.save()
+
+    def closeEvent(self, event) -> None:
+        for page in self.pages:
+            shutdown = getattr(page, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown()
+                except Exception:
+                    pass
+        for worker in (
+            self._check_worker,
+            self._install_worker,
+            self._cloud_worker,
+        ):
+            if worker is not None and worker.isRunning():
+                worker.wait(20000)
+        super().closeEvent(event)
 
     def _build_menus(self) -> None:
         menubar = self.menuBar()

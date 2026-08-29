@@ -1,3 +1,4 @@
+import os
 import sys
 
 from PySide6.QtGui import QFont, QIcon
@@ -20,4 +21,6 @@ def main() -> None:
         app.setWindowIcon(QIcon(str(icon_path)))
     window = MainWindow()
     window.show()
-    sys.exit(app.exec())
+    code = app.exec()
+    # 后台刷新/同步线程可能仍在运行，直接退出进程避免 QThread 析构崩溃
+    os._exit(code)

@@ -322,3 +322,13 @@ class PlanningPage(QScrollArea):
         self._reload_goals()
         self._calc_projection()
         self._calc_saving()
+
+    def save(self) -> None:
+        """全局保存：正在编辑时保存修改，否则新增目标。"""
+        if self._editing_goal is not None:
+            self._update_goal()
+        else:
+            self._add_goal()
+
+    def undo(self) -> None:
+        self._undo_goal()

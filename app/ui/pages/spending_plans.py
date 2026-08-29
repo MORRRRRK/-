@@ -1,24 +1,34 @@
 from __future__ import annotations
 
+import shutil
+from datetime import datetime
+
 from PySide6.QtCore import QDate, Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDateEdit,
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
 
 from ...core import repository
+from ...core.paths import images_dir
 from ...services import account_service, transaction_service
 from ..widgets import (
     Section,
@@ -41,6 +51,7 @@ class SpendingPlansPage(QWidget):
         self.on_change = on_change
         self._plan_ids: list[int] = []
         self._item_ids: list[int | None] = []
+        self._item_rows: list[dict] = []
         self._deleted_items: list[dict] = []
         self._deleted_plan: dict | None = None
         self._current_plan_id: int | None = None
@@ -80,7 +91,7 @@ class SpendingPlansPage(QWidget):
         plan_section = Section(
             "计划信息",
             actions=[self.plan_save_button],
-            info="日期范围为选填，填写后用于关联流水时默认筛选时间段",
+            info="日期范围仅表示计划执行时间；关联流水默认筛选近三个月到今天",
         )
         form = QHBoxLayout()
         form.addWidget(QLabel("名称"))
@@ -149,9 +160,11 @@ class SpendingPlansPage(QWidget):
             info="每个分项可单独关联记账流水，实际金额 = 关联流水合计 + 手动补录",
         )
 
-        self.items_table = QTableWidget(0, 7)
+        self.items_table = QTableWidget(0, 8)
+        self.items_table._enter_save = True
         self.items_table.setHorizontalHeaderLabels(
             [
+                "完成",
                 "分项名称",
                 "手动补录",
                 "计划金额",
@@ -162,6 +175,7 @@ class SpendingPlansPage(QWidget):
             ]
         )
         self.items_table.verticalHeader().setVisible(False)
+        self.items_table.itemChanged.connect(self._on_item_changed)
         self.items_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch
         )
@@ -231,6 +245,7 @@ class SpendingPlansPage(QWidget):
         self.link_card.set_value(str(summary["total_links"]), "")
 
         self._item_ids = []
+        self._item_rows = []
         self.items_table.setRowCount(0)
         for item in summary["items"]:
             self._append_item_row(item)
@@ -242,36 +257,49 @@ class SpendingPlansPage(QWidget):
         row = self.items_table.rowCount()
         self.items_table.insertRow(row)
         self._item_ids.append(item["id"] if item else None)
+        self._item_rows.append(dict(item) if item else {})
+
+        completed = bool(item.get("completed")) if item else False
+        done_item = QTableWidgetItem()
+        done_item.setFlags(
+            Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        )
+        done_item.setCheckState(
+            Qt.Checked if completed else Qt.Unchecked
+        )
+        done_item.setTextAlignment(Qt.AlignCenter)
+        done_item.setToolTip("勾选后该分项标记为已完成并锁定整行")
+        self.items_table.setItem(row, 0, done_item)
 
         name_item = QTableWidgetItem(item["name"] if item else "新分项")
         name_item.setTextAlignment(Qt.AlignCenter)
-        self.items_table.setItem(row, 0, name_item)
+        self.items_table.setItem(row, 1, name_item)
 
         manual = float(item.get("manual_actual") or 0.0) if item else 0.0
         manual_item = QTableWidgetItem(f"{manual:.2f}")
         manual_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.items_table.setItem(row, 1, manual_item)
+        self.items_table.setItem(row, 2, manual_item)
 
         planned = float(item.get("planned_amount") or 0.0) if item else 0.0
         planned_item = QTableWidgetItem(f"{planned:.2f}")
         planned_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.items_table.setItem(row, 2, planned_item)
+        self.items_table.setItem(row, 3, planned_item)
 
         actual = float(item.get("actual") or 0.0) if item else 0.0
         actual_item = QTableWidgetItem(money(actual))
         actual_item.setFlags(actual_item.flags() & ~Qt.ItemIsEditable)
         actual_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.items_table.setItem(row, 3, actual_item)
+        self.items_table.setItem(row, 4, actual_item)
 
         count = int(item.get("linked_count") or 0) if item else 0
         count_item = QTableWidgetItem(str(count))
         count_item.setFlags(count_item.flags() & ~Qt.ItemIsEditable)
         count_item.setTextAlignment(Qt.AlignCenter)
-        self.items_table.setItem(row, 4, count_item)
+        self.items_table.setItem(row, 5, count_item)
 
         note_item = QTableWidgetItem(item["note"] if item else "")
         note_item.setTextAlignment(Qt.AlignCenter)
-        self.items_table.setItem(row, 5, note_item)
+        self.items_table.setItem(row, 6, note_item)
 
         op = QWidget()
         op_layout = QHBoxLayout(op)
@@ -281,22 +309,60 @@ class SpendingPlansPage(QWidget):
         link_button.clicked.connect(
             lambda _=False, r=row: self._open_link_dialog(r)
         )
+        voucher_button = make_button("凭证")
+        voucher_button.clicked.connect(
+            lambda _=False, r=row: self._open_voucher_dialog(r)
+        )
         op_layout.addWidget(link_button)
+        op_layout.addWidget(voucher_button)
         op_layout.addStretch(1)
-        self.items_table.setCellWidget(row, 6, op)
+        self.items_table.setCellWidget(row, 7, op)
+        self._apply_row_lock(row)
+
+    def _apply_row_lock(self, row: int) -> None:
+        """已完成分项锁定整行，取消勾选后恢复编辑。"""
+        done_item = self.items_table.item(row, 0)
+        if done_item is None:
+            return
+        completed = done_item.checkState() == Qt.Checked
+        for col in (1, 2, 3, 6):
+            cell = self.items_table.item(row, col)
+            if cell is None:
+                continue
+            flags = cell.flags()
+            if completed:
+                cell.setFlags(flags & ~Qt.ItemIsEditable)
+            else:
+                cell.setFlags(flags | Qt.ItemIsEditable)
+        op = self.items_table.cellWidget(row, 7)
+        if op is not None:
+            for button in op.findChildren(QPushButton):
+                button.setEnabled(not completed)
+
+    def _on_item_changed(self, item) -> None:
+        if item is None or item.column() != 0:
+            return
+        row = item.row()
+        if 0 <= row < len(self._item_ids):
+            self._apply_row_lock(row)
 
     def _item_from_row(self, row: int) -> dict:
+        stored = dict(self._item_rows[row]) if row < len(self._item_rows) else {}
         return {
+            **stored,
             "id": self._item_ids[row],
             "plan_id": self._current_plan_id,
-            "name": self.items_table.item(row, 0).text().strip(),
+            "name": self.items_table.item(row, 1).text().strip(),
             "manual_actual": _parse_float(
-                self.items_table.item(row, 1).text()
-            ),
-            "planned_amount": _parse_float(
                 self.items_table.item(row, 2).text()
             ),
-            "note": self.items_table.item(row, 5).text().strip(),
+            "planned_amount": _parse_float(
+                self.items_table.item(row, 3).text()
+            ),
+            "note": self.items_table.item(row, 6).text().strip(),
+            "completed": int(
+                self.items_table.item(row, 0).checkState() == Qt.Checked
+            ),
             "sort_order": row,
         }
 
@@ -305,7 +371,7 @@ class SpendingPlansPage(QWidget):
             return
         self._append_item_row()
         self.items_table.setCurrentCell(
-            self.items_table.rowCount() - 1, 0
+            self.items_table.rowCount() - 1, 1
         )
 
     def _delete_item(self) -> None:
@@ -323,6 +389,7 @@ class SpendingPlansPage(QWidget):
             repository.delete_spending_plan_item(self.conn, item["id"])
             self.conn.commit()
         self._item_ids.pop(row)
+        self._item_rows.pop(row)
         self.items_table.removeRow(row)
         self._load_plan()
         self.on_change()
@@ -341,7 +408,7 @@ class SpendingPlansPage(QWidget):
         if self._current_plan_id is None:
             return
         for row in range(self.items_table.rowCount()):
-            name = self.items_table.item(row, 0).text().strip()
+            name = self.items_table.item(row, 1).text().strip()
             if not name:
                 continue
             item = self._item_from_row(row)
@@ -353,6 +420,7 @@ class SpendingPlansPage(QWidget):
                     item["planned_amount"],
                     item["manual_actual"],
                     item["note"],
+                    item["completed"],
                 )
             else:
                 repository.update_spending_plan_item(
@@ -362,11 +430,33 @@ class SpendingPlansPage(QWidget):
                     item["planned_amount"],
                     item["manual_actual"],
                     item["note"],
+                    item["completed"],
                 )
         self.conn.commit()
         flash_saved(self.save_items_button)
         self._load_plan()
         self.on_change()
+
+    def _open_voucher_dialog(self, row: int) -> None:
+        if self._current_plan_id is None:
+            return
+        item_id = self._item_ids[row]
+        if item_id is None:
+            QMessageBox.information(
+                self, "提示", "请先保存分项，再上传消费凭证"
+            )
+            return
+        current = (
+            str(self._item_rows[row].get("voucher_path") or "")
+            if row < len(self._item_rows)
+            else ""
+        )
+        dialog = VoucherDialog(self.conn, item_id, current, self)
+        if dialog.exec() == QDialog.Accepted:
+            if row < len(self._item_rows):
+                self._item_rows[row]["voucher_path"] = dialog.current_path()
+            self._load_plan()
+            self.on_change()
 
     def _open_link_dialog(self, row: int) -> None:
         if self._current_plan_id is None:
@@ -377,15 +467,10 @@ class SpendingPlansPage(QWidget):
                 self, "提示", "请先保存分项，再关联流水"
             )
             return
-        plan = repository.get_spending_plan(
-            self.conn, self._current_plan_id
-        )
         dialog = LinkTransactionsDialog(
             self.conn,
             self._current_plan_id,
             item_id,
-            str(plan.get("start_date") or "") if plan else "",
-            str(plan.get("end_date") or "") if plan else "",
             self,
         )
         if dialog.exec() == QDialog.Accepted:
@@ -505,6 +590,134 @@ class SpendingPlansPage(QWidget):
     def refresh(self) -> None:
         self._reload_plans()
 
+    def save(self) -> None:
+        """全局保存：根据焦点保存分项或计划信息。"""
+        focus = QApplication.focusWidget()
+        if _widget_in_table(focus, self.items_table):
+            self._save_items()
+        else:
+            self._save_plan()
+
+    def undo(self) -> None:
+        """全局撤销：优先恢复最近删除的分项，其次恢复整个计划。"""
+        if self._deleted_items:
+            self._undo_item()
+        elif self._deleted_plan is not None:
+            self._undo_plan()
+
+
+class VoucherDialog(QDialog):
+    """消费凭证：上传、替换、删除并预览图片。"""
+
+    def __init__(self, conn, item_id: int, current: str = "", parent=None):
+        super().__init__(parent)
+        self.conn = conn
+        self.item_id = item_id
+        self._voucher = str(current or "")
+        self.setWindowTitle("消费凭证")
+        self.setMinimumSize(520, 440)
+        layout = QVBoxLayout(self)
+
+        self.preview_label = QLabel("未上传凭证")
+        self.preview_label.setObjectName("card")
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setMinimumHeight(300)
+        self.preview_label.setWordWrap(True)
+        layout.addWidget(self.preview_label, 1)
+
+        buttons = QHBoxLayout()
+        self.upload_button = make_button("上传 / 替换", primary=True)
+        self.delete_button = make_button("删除")
+        self.close_button = make_button("关闭")
+        self.upload_button.clicked.connect(self._choose)
+        self.delete_button.clicked.connect(self._delete)
+        self.close_button.clicked.connect(self.accept)
+        buttons.addStretch(1)
+        buttons.addWidget(self.upload_button)
+        buttons.addWidget(self.delete_button)
+        buttons.addWidget(self.close_button)
+        layout.addLayout(buttons)
+        self._refresh_preview()
+
+    def current_path(self) -> str:
+        return self._voucher
+
+    def _file_path(self) -> str:
+        return str(images_dir() / self._voucher) if self._voucher else ""
+
+    def _refresh_preview(self) -> None:
+        path = self._file_path()
+        if not path or not Path(path).exists():
+            self.preview_label.setText("未上传凭证")
+            self.preview_label.setPixmap(QPixmap())
+            self.delete_button.setEnabled(False)
+            return
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            self.preview_label.setText(
+                "图片无法预览，可点击“上传 / 替换”重新选择"
+            )
+            self.preview_label.setPixmap(QPixmap())
+            self.delete_button.setEnabled(True)
+            return
+        self.preview_label.setPixmap(
+            pixmap.scaled(
+                self.preview_label.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        )
+        self.delete_button.setEnabled(True)
+
+    def _choose(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择消费凭证图片",
+            "",
+            "图片文件 (*.png *.jpg *.jpeg *.bmp *.webp)",
+        )
+        if not path:
+            return
+        images_dir().mkdir(parents=True, exist_ok=True)
+        suffix = Path(path).suffix.lower() or ".jpg"
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"voucher_item{self.item_id}_{stamp}{suffix}"
+        shutil.copy2(path, images_dir() / filename)
+        old = self._voucher
+        self._voucher = filename
+        repository.update_spending_plan_item_voucher(
+            self.conn, self.item_id, filename
+        )
+        self.conn.commit()
+        if old and (images_dir() / old).exists():
+            try:
+                (images_dir() / old).unlink()
+            except OSError:
+                pass
+        self._refresh_preview()
+
+    def _delete(self) -> None:
+        if not self._voucher:
+            return
+        if not confirm_delete(self, "删除凭证", "确定删除该消费凭证图片？"):
+            return
+        old = self._voucher
+        repository.update_spending_plan_item_voucher(
+            self.conn, self.item_id, ""
+        )
+        self.conn.commit()
+        self._voucher = ""
+        if (images_dir() / old).exists():
+            try:
+                (images_dir() / old).unlink()
+            except OSError:
+                pass
+        self._refresh_preview()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh_preview()
+
 
 class LinkTransactionsDialog(QDialog):
     """勾选记账流水，归集到某个计划分项。"""
@@ -514,8 +727,6 @@ class LinkTransactionsDialog(QDialog):
         conn,
         plan_id: int,
         item_id: int,
-        start_date: str = "",
-        end_date: str = "",
         parent=None,
     ):
         super().__init__(parent)
@@ -528,8 +739,8 @@ class LinkTransactionsDialog(QDialog):
         layout = QVBoxLayout(self)
 
         filter_row = QHBoxLayout()
-        default_start = QDate.fromString(start_date, "yyyy-MM-dd") if start_date else QDate.currentDate().addMonths(-3)
-        default_end = QDate.fromString(end_date, "yyyy-MM-dd") if end_date else QDate.currentDate()
+        default_start = QDate.currentDate().addMonths(-3)
+        default_end = QDate.currentDate()
         self.start_edit = QDateEdit(default_start)
         self.end_edit = QDateEdit(default_end)
         for edit in (self.start_edit, self.end_edit):
@@ -552,6 +763,11 @@ class LinkTransactionsDialog(QDialog):
             ["勾选", "日期", "商家", "备注", "金额", "账户"]
         )
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(44)
+        self.table.verticalHeader().setSectionResizeMode(
+            QHeaderView.ResizeToContents
+        )
+        self.table.setItemDelegate(_WrapTextDelegate(self.table))
         self.table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch
         )
@@ -617,6 +833,7 @@ class LinkTransactionsDialog(QDialog):
                 item = QTableWidgetItem(str(text))
                 item.setTextAlignment(Qt.AlignCenter)
                 self.table.setItem(r, c, item)
+        self.table.resizeRowsToContents()
         self._update_summary()
 
     def _selected_ids(self) -> list[int]:
@@ -648,6 +865,23 @@ class LinkTransactionsDialog(QDialog):
         )
         self.conn.commit()
         self.accept()
+
+
+class _WrapTextDelegate(QStyledItemDelegate):
+    """让关联流水表格中的长文本自动换行显示。"""
+
+    def initStyleOption(self, option, index) -> None:
+        super().initStyleOption(option, index)
+        option.features |= QStyleOptionViewItem.WrapText
+
+
+def _widget_in_table(widget, table) -> bool:
+    current = widget
+    while current is not None:
+        if current is table:
+            return True
+        current = current.parentWidget()
+    return False
 
 
 def _parse_float(text: str) -> float:
