@@ -6,8 +6,14 @@ import unittest
 from pathlib import Path
 
 from app.core import repository
-from app.core.schema import _migrate_holdings_accounts, apply_schema
+from app.core.db import backup_before_migration
+from app.core.schema import (
+    SCHEMA_VERSION,
+    _migrate_holdings_accounts,
+    apply_schema,
+)
 from app.services import account_service, exporter
+from app.services import llm
 
 
 class V441SchemaTest(unittest.TestCase):
@@ -105,6 +111,57 @@ class V441SchemaTest(unittest.TestCase):
         text = path.read_text(encoding="utf-8-sig")
         self.assertIn("类型,日期,设置时间,名称,金额,货币,汇率", text)
         self.assertIn("支出,2026-08-01,2026-08-01 12:00:00,午餐,-25.50,CNY,1", text)
+        conn.close()
+
+    def test_backup_before_migration(self) -> None:
+        folder = Path(tempfile.mkdtemp())
+        path = folder / "old.db"
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE t (id INTEGER)")
+        conn.execute("PRAGMA user_version = 13")
+        conn.commit()
+        conn.close()
+
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        target = folder / "backups"
+        backup = backup_before_migration(path, conn, target)
+        self.assertIsNotNone(backup)
+        self.assertTrue(backup.exists())
+        self.assertIn(
+            f"pre_migration_v13_to_v{SCHEMA_VERSION}", backup.name
+        )
+        conn.close()
+
+    def test_llm_report_contexts(self) -> None:
+        conn = self._conn()
+        account_id = account_service.add_account(conn, "现金", "cash")
+        conn.execute(
+            """
+            INSERT INTO transactions(
+              trans_date, type, amount, account_id, merchant
+            ) VALUES ('2026-08-01', 'expense', 30.0, ?, '午餐')
+            """,
+            (account_id,),
+        )
+        conn.commit()
+
+        bill = llm.build_financial_context(
+            conn, "bill", "2026-08-01", "2026-08-31"
+        )
+        self.assertEqual(bill["expense_total"], 30.0)
+        self.assertIn("expense_categories", bill)
+
+        salary = llm.build_financial_context(conn, "salary")
+        self.assertIn("salary_profiles", salary)
+
+        planning = llm.build_financial_context(conn, "planning")
+        self.assertIn("net_worth", planning)
+        self.assertIn("goals", planning)
+
+        custom = llm.build_financial_context(conn, "custom")
+        self.assertIn("totals", custom)
+        self.assertIn("monthly_records", custom)
         conn.close()
 
 

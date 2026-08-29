@@ -75,7 +75,9 @@ class PlanningPage(QScrollArea):
                 )
             )
         projection_section = Section(
-            "净资产增长模拟（仅供参考）", actions=projection_actions
+            "净资产增长模拟",
+            actions=projection_actions,
+            info="模拟结果仅供参考，不构成收益承诺",
         )
         proj_grid = QGridLayout()
         self.current_spin = make_money_spin(100000.0)

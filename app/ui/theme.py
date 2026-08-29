@@ -143,6 +143,19 @@ def apply_theme(window: QMainWindow, conn) -> None:
             border-color: __ACCENT__;
         }
         QPushButton#primaryButton:hover { background: __ACCENT__; }
+        QToolButton#infoIcon {
+            background: __INPUT__;
+            border: 1px solid __BORDER__;
+            border-radius: 9px;
+            color: __MUTED__;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        QToolButton#infoIcon:hover {
+            border-color: __ACCENT__;
+            color: __ACCENT__;
+            background: __BUTTON_HOVER__;
+        }
         QTableWidget {
             background: __PANEL__;
             alternate-background-color: __TABLE_ALT__;

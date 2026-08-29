@@ -66,11 +66,21 @@ class OverviewPage(QScrollArea):
 
         cards_row = QHBoxLayout()
         cards_row.setSpacing(14)
-        self.net_worth_card = StatCard("净资产（存款 + 持仓）")
-        self.deposit_card = StatCard("累计存款")
-        self.holding_card = StatCard("投资持仓")
-        self.profit_card = StatCard("累计收益")
-        self.rate_card = StatCard("总收益率")
+        self.net_worth_card = StatCard(
+            "净资产", info="净资产 = 累计存款 + 投资总持仓"
+        )
+        self.deposit_card = StatCard(
+            "累计存款", info="累计存款 = Σ 每月强制存款"
+        )
+        self.holding_card = StatCard(
+            "投资持仓", info="投资持仓 = Σ 各类持仓市值 + Σ 黄金账户市值"
+        )
+        self.profit_card = StatCard(
+            "累计收益", info="累计收益 = Σ 各类累计收益 + Σ 黄金账户收益"
+        )
+        self.rate_card = StatCard(
+            "总收益率", info="总收益率 = 累计收益 ÷ 投资持仓"
+        )
         for card in (
             self.net_worth_card,
             self.deposit_card,
@@ -102,7 +112,10 @@ class OverviewPage(QScrollArea):
         self.year_income_card = StatCard("本年度收入")
         self.year_expense_card = StatCard("本年度支出")
         self.year_balance_card = StatCard("本年度结余")
-        self.year_deposit_card = StatCard("本年度强制存款")
+        self.year_deposit_card = StatCard(
+            "本年度强制存款",
+            info="强制存款表面按支出记录，实际计入累计存款",
+        )
         for card in (
             self.year_income_card,
             self.year_expense_card,

@@ -156,7 +156,10 @@ class HoldingsPage(QWidget):
         action_row.addWidget(self.save_button)
         layout.addLayout(action_row)
 
-        table_section = Section("持仓列表（直接在表格中修改，保存后全部生效）")
+        table_section = Section(
+            "持仓列表",
+            info="直接在表格中修改，点右上角“保存修改”后全部生效",
+        )
         self.table = QTableWidget(0, 15)
         self.table.setHorizontalHeaderLabels(
             [
@@ -172,7 +175,10 @@ class HoldingsPage(QWidget):
         table_section.add(self.table)
         layout.addWidget(table_section)
 
-        gold_section = Section("黄金账户（积存金 / 易存金，按克参考实时金价）")
+        gold_section = Section(
+            "黄金账户",
+            info="积存金 / 易存金按克记录，参考实时金价",
+        )
         gold_top = QHBoxLayout()
         self.gold_refresh_button = make_button("刷新实时金价")
         self.gold_add_button = make_button("新增黄金账户")
@@ -231,7 +237,10 @@ class HoldingsPage(QWidget):
         QTimer.singleShot(1200, lambda: self._refresh_market(show_popup=False))
 
     def _build_accounts_section(self, layout) -> None:
-        section = Section("账户管理（先建立账户，才能在持仓列表中选择）")
+        section = Section(
+            "账户管理",
+            info="先建立账户，才能在下方的持仓列表中选择渠道",
+        )
         buttons = QHBoxLayout()
         self.account_add_button = make_button("新增账户", primary=True)
         self.account_edit_button = make_button("编辑账户")

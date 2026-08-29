@@ -37,6 +37,7 @@ from .pages.overview import OverviewPage
 from .pages.planning import PlanningPage
 from .pages.reports import ReportsPage
 from .pages.settings import SettingsPage
+from .pages.spending_plans import SpendingPlansPage
 from .pages.transactions import TransactionsPage
 from .theme import apply_theme
 
@@ -81,6 +82,7 @@ class MainWindow(QMainWindow):
             "工资管理",
             "持仓管理",
             "资产规划",
+            "消费计划",
             "智能报告",
             "设置",
             "关于",
@@ -100,6 +102,7 @@ class MainWindow(QMainWindow):
             InsurancePage(self.db.conn, self.refresh_all),
             HoldingsPage(self.db.conn, self.refresh_all),
             PlanningPage(self.db.conn, self.refresh_all),
+            SpendingPlansPage(self.db.conn, self.refresh_all),
             self.reports_page,
             self.settings_page,
             self.about_page,

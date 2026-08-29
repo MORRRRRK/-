@@ -803,3 +803,331 @@ def save_chat_summary(conn: sqlite3.Connection, summary: str) -> None:
         "updated_at = datetime('now', 'localtime')",
         (str(summary), str(summary)),
     )
+
+
+def list_spending_plans(
+    conn: sqlite3.Connection,
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM spending_plans ORDER BY id"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_spending_plan(
+    conn: sqlite3.Connection, plan_id: int
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT * FROM spending_plans WHERE id = ?", (plan_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def add_spending_plan(
+    conn: sqlite3.Connection,
+    name: str,
+    total_budget: float = 0.0,
+    start_date: str = "",
+    end_date: str = "",
+    note: str = "",
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO spending_plans(
+          name, total_budget, start_date, end_date, note
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            str(name or "新计划"),
+            float(total_budget or 0.0),
+            str(start_date or ""),
+            str(end_date or ""),
+            str(note or ""),
+        ),
+    )
+    plan_id = int(cur.lastrowid)
+    conn.execute(
+        """
+        INSERT INTO spending_plan_items(
+          plan_id, name, sort_order
+        ) VALUES (?, '未分项', 0)
+        """,
+        (plan_id,),
+    )
+    return plan_id
+
+
+def update_spending_plan(
+    conn: sqlite3.Connection,
+    plan_id: int,
+    name: str,
+    total_budget: float = 0.0,
+    start_date: str = "",
+    end_date: str = "",
+    note: str = "",
+) -> None:
+    conn.execute(
+        """
+        UPDATE spending_plans SET
+          name = ?, total_budget = ?, start_date = ?, end_date = ?, note = ?,
+          updated_at = datetime('now', 'localtime')
+        WHERE id = ?
+        """,
+        (
+            str(name or "新计划"),
+            float(total_budget or 0.0),
+            str(start_date or ""),
+            str(end_date or ""),
+            str(note or ""),
+            plan_id,
+        ),
+    )
+
+
+def delete_spending_plan(
+    conn: sqlite3.Connection, plan_id: int
+) -> None:
+    conn.execute("DELETE FROM spending_plans WHERE id = ?", (plan_id,))
+
+
+def restore_spending_plan(
+    conn: sqlite3.Connection, plan: dict[str, Any]
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO spending_plans(
+          id, name, total_budget, start_date, end_date, note,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(plan["id"]),
+            plan.get("name", "新计划"),
+            float(plan.get("total_budget") or 0.0),
+            plan.get("start_date", ""),
+            plan.get("end_date", ""),
+            plan.get("note", ""),
+            plan.get("created_at", ""),
+            plan.get("updated_at", ""),
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def list_spending_plan_items(
+    conn: sqlite3.Connection, plan_id: int
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT * FROM spending_plan_items
+        WHERE plan_id = ? ORDER BY sort_order, id
+        """,
+        (plan_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_spending_plan_item(
+    conn: sqlite3.Connection,
+    plan_id: int,
+    name: str,
+    planned_amount: float = 0.0,
+    manual_actual: float = 0.0,
+    note: str = "",
+) -> int:
+    sort_order = int(
+        conn.execute(
+            """
+            SELECT COALESCE(MAX(sort_order), 0) FROM spending_plan_items
+            WHERE plan_id = ?
+            """,
+            (plan_id,),
+        ).fetchone()[0]
+        + 1
+    )
+    cur = conn.execute(
+        """
+        INSERT INTO spending_plan_items(
+          plan_id, name, planned_amount, manual_actual, note, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            plan_id,
+            str(name or "新分项"),
+            float(planned_amount or 0.0),
+            float(manual_actual or 0.0),
+            str(note or ""),
+            sort_order,
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def update_spending_plan_item(
+    conn: sqlite3.Connection,
+    item_id: int,
+    name: str,
+    planned_amount: float = 0.0,
+    manual_actual: float = 0.0,
+    note: str = "",
+) -> None:
+    conn.execute(
+        """
+        UPDATE spending_plan_items SET
+          name = ?, planned_amount = ?, manual_actual = ?, note = ?
+        WHERE id = ?
+        """,
+        (
+            str(name or "新分项"),
+            float(planned_amount or 0.0),
+            float(manual_actual or 0.0),
+            str(note or ""),
+            item_id,
+        ),
+    )
+
+
+def delete_spending_plan_item(
+    conn: sqlite3.Connection, item_id: int
+) -> None:
+    conn.execute(
+        "DELETE FROM spending_plan_items WHERE id = ?", (item_id,)
+    )
+
+
+def restore_spending_plan_item(
+    conn: sqlite3.Connection, item: dict[str, Any]
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO spending_plan_items(
+          id, plan_id, name, planned_amount, manual_actual, note, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(item["id"]),
+            int(item["plan_id"]),
+            item.get("name", "未分项"),
+            float(item.get("planned_amount") or 0.0),
+            float(item.get("manual_actual") or 0.0),
+            item.get("note", ""),
+            int(item.get("sort_order") or 0),
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def list_spending_plan_links(
+    conn: sqlite3.Connection, plan_id: int
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT l.*, t.trans_date, t.amount, t.merchant, t.note,
+               a.name AS account_name
+        FROM spending_plan_links l
+        JOIN transactions t ON t.id = l.transaction_id
+        LEFT JOIN accounts a ON a.id = t.account_id
+        WHERE l.plan_id = ? ORDER BY t.trans_date, t.id
+        """,
+        (plan_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_spending_item_links(
+    conn: sqlite3.Connection,
+    plan_id: int,
+    item_id: int,
+    transaction_ids: Iterable[int],
+) -> None:
+    conn.execute(
+        "DELETE FROM spending_plan_links WHERE item_id = ?", (item_id,)
+    )
+    seen: set[int] = set()
+    for transaction_id in transaction_ids:
+        transaction_id = int(transaction_id)
+        if transaction_id in seen:
+            continue
+        seen.add(transaction_id)
+        conn.execute(
+            "DELETE FROM spending_plan_links "
+            "WHERE plan_id = ? AND transaction_id = ?",
+            (plan_id, transaction_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO spending_plan_links(
+              plan_id, item_id, transaction_id
+            ) VALUES (?, ?, ?)
+            """,
+            (plan_id, item_id, transaction_id),
+        )
+
+
+def restore_spending_plan_links(
+    conn: sqlite3.Connection, links: Iterable[dict[str, Any]]
+) -> None:
+    for link in links:
+        transaction_id = int(link.get("transaction_id") or 0)
+        exists = conn.execute(
+            "SELECT 1 FROM transactions WHERE id = ?",
+            (transaction_id,),
+        ).fetchone()
+        if not exists:
+            continue
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO spending_plan_links(
+              plan_id, item_id, transaction_id
+            ) VALUES (?, ?, ?)
+            """,
+            (
+                int(link.get("plan_id") or 0),
+                int(link.get("item_id") or 0),
+                transaction_id,
+            ),
+        )
+
+
+def spending_plan_summary(
+    conn: sqlite3.Connection, plan_id: int
+) -> dict[str, Any]:
+    items = list_spending_plan_items(conn, plan_id)
+    links = list_spending_plan_links(conn, plan_id)
+    linked_by_item: dict[int, list[dict[str, Any]]] = {}
+    for link in links:
+        linked_by_item.setdefault(int(link["item_id"]), []).append(link)
+    item_rows = []
+    total_actual = 0.0
+    total_planned = 0.0
+    total_links = 0
+    for item in items:
+        item_links = linked_by_item.get(int(item["id"]), [])
+        linked_total = sum(
+            abs(float(link.get("amount") or 0.0)) for link in item_links
+        )
+        manual = float(item.get("manual_actual") or 0.0)
+        actual = linked_total + manual
+        planned = float(item.get("planned_amount") or 0.0)
+        total_actual += actual
+        total_planned += planned
+        total_links += len(item_links)
+        item_rows.append(
+            {
+                **item,
+                "linked_count": len(item_links),
+                "linked_total": linked_total,
+                "actual": actual,
+            }
+        )
+    plan = get_spending_plan(conn, plan_id) or {}
+    budget = float(plan.get("total_budget") or 0.0)
+    return {
+        "plan": plan,
+        "items": item_rows,
+        "total_actual": total_actual,
+        "total_planned": total_planned,
+        "total_links": total_links,
+        "budget": budget,
+        "remaining": budget - total_actual if budget > 0 else 0.0,
+    }

@@ -26,6 +26,7 @@ CUSTOMER_TOP = {
     "_internal",
     "edition.ini",
     "update_config.ini",
+    "app_version.txt",
 }
 PRIVATE_PATTERNS = (
     "finance.db",
@@ -124,19 +125,27 @@ def build_customer() -> None:
         if result.returncode != 0:
             tail = (result.stdout or "")[-800:] + (result.stderr or "")[-800:]
             raise RuntimeError("客户版构建失败：\n" + tail)
-    (new_app / "edition.ini").write_text("customer\n", encoding="ascii")
+    built = new_app / "财务软件客户版"
+    if not built.exists():
+        built = new_app
+    (built / "edition.ini").write_text("customer\n", encoding="ascii")
     shutil.copy2(
         source_root / "dist" / "updater_helper.exe",
-        new_app / "updater_helper.exe",
+        built / "updater_helper.exe",
     )
-    (new_app / "update_config.ini").write_text(
+    (built / "update_config.ini").write_text(
         "repo=MORRRRRK/finance-releases\n", encoding="ascii"
     )
+    from .. import __version__
+    (built / "app_version.txt").write_text(
+        __version__, encoding="utf-8"
+    )
     if not customer_app.exists():
-        shutil.move(str(new_app), str(customer_app))
+        shutil.move(str(built), str(customer_app))
+        shutil.rmtree(new_app, ignore_errors=True)
         return
     _stop_customer_processes(customer_app)
-    _replace_customer_program(new_app, customer_app)
+    _replace_customer_program(built, customer_app)
     shutil.rmtree(new_app)
 
 
@@ -268,6 +277,13 @@ def package(version: str, customer_only: bool = False) -> dict[str, Path]:
         paths["finance_app"] = _package_app(
             dev_app, releases_dir / f"finance-app-{version}.zip", DEV_TOP
         )
+    version_file = customer_app / "app_version.txt"
+    if version_file.exists():
+        built_version = version_file.read_text(encoding="utf-8").strip()
+        if built_version and built_version != version:
+            raise RuntimeError(
+                f"客户版构建版本为 {built_version}，发布版本写的是 {version}，请先同步 __version__ 再推送"
+            )
     paths["customer_app"] = _package_app(
         customer_app,
         releases_dir / f"customer-app-{version}.zip",
@@ -425,8 +441,6 @@ def publish(
         raise RuntimeError("未填写 GitHub Token，请在“设置”中填写")
     if build_first:
         build_customer()
-    if code_repo:
-        push_source(version, notes, code_repo, token)
     packaged = package(version, customer_only)
     write_manifests(version, repo, notes, packaged, customer_only)
     _, _, _, releases_dir = _project_layout()
@@ -451,4 +465,10 @@ def publish(
             path,
             "application/zip" if path.suffix == ".zip" else "application/json",
         )
-    return f"https://github.com/{repo}/releases/tag/{tag}"
+    url = f"https://github.com/{repo}/releases/tag/{tag}"
+    if code_repo:
+        try:
+            push_source(version, notes, code_repo, token)
+        except RuntimeError as exc:
+            raise RuntimeError(f"客户版已发布：{url}，但源码推送失败：{exc}")
+    return url

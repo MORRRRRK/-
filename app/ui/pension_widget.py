@@ -69,8 +69,9 @@ class PensionWidget(QWidget):
                 )
             )
         section = Section(
-            "退休金测算（按工作经历分别估算，最新一份工作为准）",
+            "退休金测算",
             actions=actions,
+            info="按工作经历分别估算，以最新一份工作的测算为准",
         )
         pension_form = QGridLayout()
         pension_form.setHorizontalSpacing(12)
@@ -139,7 +140,8 @@ class PensionWidget(QWidget):
         layout.addWidget(section)
 
         pension_result = Section(
-            "测算结果（仅供参考，实际以社保经办机构核定为准）"
+            "测算结果",
+            info="测算仅供参考，实际以社保经办机构核定为准",
         )
         self.pension_main_result = QLabel("-")
         self.pension_main_result.setObjectName("summaryValue")

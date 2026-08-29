@@ -14,7 +14,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from ..services import account_service, category_service
@@ -80,6 +82,34 @@ def make_formula_button(parent, title: str, text: str) -> QPushButton:
     return button
 
 
+class InfoIcon(QToolButton):
+    """圆形问号提示：鼠标悬停显示使用说明。"""
+
+    def __init__(self, tooltip: str, parent=None):
+        super().__init__(parent)
+        self.setText("?")
+        self.setObjectName("infoIcon")
+        self.setToolTip(tooltip)
+        self.setCursor(Qt.WhatsThisCursor)
+        self.setFixedSize(18, 18)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setAutoRaise(True)
+
+
+def info_label(text: str, tooltip: str) -> QWidget:
+    """把说明文字从括号移到悬停提示，返回“标签 + ?”控件。"""
+    widget = QWidget()
+    layout = QHBoxLayout(widget)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(4)
+    label = QLabel(text)
+    label.setObjectName("fieldLabel")
+    layout.addWidget(label)
+    layout.addWidget(InfoIcon(tooltip))
+    layout.addStretch(1)
+    return widget
+
+
 def flash_saved(button: QPushButton) -> None:
     """保存成功后让按钮短暂变绿，提示用户保存成功。"""
     original = button.styleSheet()
@@ -110,20 +140,26 @@ def confirm_delete(parent, title: str, text: str) -> bool:
 class StatCard(QFrame):
     """总览页指标卡片。"""
 
-    def __init__(self, title: str, parent=None):
+    def __init__(self, title: str, parent=None, info: str = ""):
         super().__init__(parent)
         self.setObjectName("card")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(4)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(4)
         self.title_label = QLabel(title)
         self.title_label.setObjectName("cardTitle")
+        title_row.addWidget(self.title_label)
+        if info:
+            title_row.addWidget(InfoIcon(info))
+        title_row.addStretch(1)
         self.value_label = QLabel("0.00")
         self.value_label.setObjectName("cardValue")
         self.sub_label = QLabel("")
         self.sub_label.setObjectName("cardSub")
-        layout.addWidget(self.title_label)
+        layout.addLayout(title_row)
         layout.addWidget(self.value_label)
         layout.addWidget(self.sub_label)
 
@@ -135,7 +171,13 @@ class StatCard(QFrame):
 class Section(QFrame):
     """白底分组面板。"""
 
-    def __init__(self, title: str, parent=None, actions: list | None = None):
+    def __init__(
+        self,
+        title: str,
+        parent=None,
+        actions: list | None = None,
+        info: str = "",
+    ):
         super().__init__(parent)
         self.setObjectName("card")
         layout = QVBoxLayout(self)
@@ -145,6 +187,8 @@ class Section(QFrame):
         title_label.setObjectName("sectionTitle")
         title_row = QHBoxLayout()
         title_row.addWidget(title_label)
+        if info:
+            title_row.addWidget(InfoIcon(info))
         title_row.addStretch(1)
         for action in actions or []:
             title_row.addWidget(action)

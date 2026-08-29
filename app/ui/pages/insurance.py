@@ -31,6 +31,7 @@ from ..widgets import (
     Section,
     confirm_delete,
     flash_saved,
+    info_label,
     make_button,
     make_money_spin,
     make_year_combo,
@@ -340,7 +341,7 @@ class SalaryProfileTab(QScrollArea):
         self.bonus_coef_spin = self._coefficient_spin(1.0)
         self.bonus_freq_combo = self._frequency_combo("annual")
 
-        grid.addWidget(QLabel("基本工资（月）"), 0, 0)
+        grid.addWidget(info_label("基本工资", "按月发放的基本工资金额"), 0, 0)
         grid.addWidget(self.base_spin, 0, 1)
         grid.addWidget(QLabel("13薪 xN"), 0, 2)
         grid.addWidget(self.thirteen_coef_spin, 0, 3)
@@ -384,7 +385,8 @@ class SalaryProfileTab(QScrollArea):
         self.undo_delete_button.clicked.connect(self._undo_delete_row)
         self.items_save_button.clicked.connect(self._save_insurance)
         section = Section(
-            "N险N金（五险一金 / 其他险种，可自定义添加）",
+            "N险N金",
+            info="包含五险一金与其他可自定义险种；可新增、删除、撤销删除",
             actions=[
                 self.add_item_button,
                 self.delete_item_button,
@@ -408,7 +410,8 @@ class SalaryProfileTab(QScrollArea):
         self.deduction_save_button = make_button("保存专项附加扣除", primary=True)
         self.deduction_save_button.clicked.connect(self._save_deduction)
         section = Section(
-            "专项附加扣除（个税抵税项目）",
+            "专项附加扣除",
+            info="个税专项附加扣除项目，可按实际情况选择或填写",
             actions=[self.deduction_save_button],
         )
         grid = QGridLayout()
@@ -439,7 +442,7 @@ class SalaryProfileTab(QScrollArea):
         self.mortgage_combo.addItem("首套房贷 1000元/月", 1)
         self.severe_combo = QComboBox()
         self.severe_combo.addItem("不享受", 0)
-        self.severe_combo.addItem("享受（填写年度扣除金额）", 1)
+        self.severe_combo.addItem("享受", 1)
         self.severe_spin = make_money_spin(0.0, 0.0, 1e6)
         self.custom_spin = make_money_spin(0.0, 0.0, 1e6)
 
@@ -472,18 +475,30 @@ class SalaryProfileTab(QScrollArea):
 
         deduction_items = [
             ("赡养老人", self.elderly_combo),
-            ("子女教育（人数）", self.children_spin),
-            ("婴幼儿照护（人数）", self.infant_spin),
+            ("子女教育", self.children_spin),
+            ("婴幼儿照护", self.infant_spin),
             ("继续教育", self.continuing_combo),
             ("住房贷款利息", self.mortgage_combo),
             ("大病医疗", self.severe_combo),
             ("大病医疗年度金额", self.severe_spin),
-            ("其他扣除（月）", self.custom_spin),
+            ("其他扣除", self.custom_spin),
         ]
+        deduction_info = {
+            "赡养老人": "独生子女 3000元/月；非独生子女分摊 1500元/月",
+            "子女教育": "每个子女 2000元/月，按人数填写",
+            "婴幼儿照护": "每个婴幼儿 2000元/月，按人数填写",
+            "继续教育": "学历继续教育 400元/月",
+            "住房贷款利息": "首套房贷 1000元/月",
+            "大病医疗": "大病医疗扣除按年度金额填写",
+            "大病医疗年度金额": "仅在选择享受大病医疗时生效",
+            "其他扣除": "其他可抵扣项目，按每月金额填写",
+        }
         for index, (title, widget) in enumerate(deduction_items):
             cell = QVBoxLayout()
             cell.setSpacing(4)
-            cell.addWidget(QLabel(title))
+            cell.addWidget(
+                info_label(title, deduction_info.get(title, title))
+            )
             cell.addWidget(widget)
             grid.addLayout(cell, index // 4 + 1, index % 4)
         note = QLabel(
@@ -513,21 +528,23 @@ class SalaryProfileTab(QScrollArea):
         grid = QGridLayout()
         self.result_labels: dict[str, QLabel] = {}
         rows = [
-            ("total_salary", "总工资（年）"),
-            ("personal_total", "个人缴纳合计（月）"),
-            ("company_total", "公司缴纳合计（月）"),
-            ("gross_income", "税前总收入（年）"),
-            ("total_package", "总包（年）"),
-            ("total_income", "全年应税收入"),
-            ("taxable_income", "全年应纳税所得额"),
-            ("wage_tax", "工资个税"),
-            ("bonus_tax", "年终奖个税"),
-            ("total_tax", "全年应缴个税"),
-            ("net_income", "全年税后收入"),
-            ("monthly_net", "月均税后收入"),
+            ("total_salary", "总工资", "按年合计的总工资"),
+            ("personal_total", "个人缴纳合计", "按每月缴纳合计"),
+            ("company_total", "公司缴纳合计", "按每月缴纳合计"),
+            ("gross_income", "税前总收入", "按年计算的税前总收入"),
+            ("total_package", "总包", "按年计算的公司总成本"),
+            ("total_income", "全年应税收入", "按实际月度流水汇总"),
+            ("taxable_income", "全年应纳税所得额", "扣除起征点与专项附加后的应税所得"),
+            ("wage_tax", "工资个税", "按累计预扣预缴估算"),
+            ("bonus_tax", "年终奖个税", "按所选计税方式计算"),
+            ("total_tax", "全年应缴个税", "工资个税 + 年终奖个税"),
+            ("net_income", "全年税后收入", "应税收入 - 五险一金 - 个税"),
+            ("monthly_net", "月均税后收入", "全年税后收入 ÷ 12"),
         ]
-        for row, (key, title) in enumerate(rows):
-            self.result_labels[key] = self._add_result_row(grid, row, key, title)
+        for row, (key, title, info) in enumerate(rows):
+            self.result_labels[key] = self._add_result_row(
+                grid, row, key, title, info
+            )
         section.add_layout(grid)
 
         self.actual_table = QTableWidget(12, 8)
@@ -774,12 +791,15 @@ class SalaryProfileTab(QScrollArea):
                 return
             for city, tier in tax_service.PROVINCE_CITIES.get(province, []):
                 self.city_combo.addItem(
-                    f"{city}（{tier:.0f}元/月）", (city, tier)
+                    f"{city} · {tier:.0f}元/月", (city, tier)
                 )
             self.city_combo.addItem(
-                "人口100万以上城市（1100元/月）", ("人口100万以上城市", 1100.0)
+                "人口100万以上城市 · 1100元/月",
+                ("人口100万以上城市", 1100.0),
             )
-            self.city_combo.addItem("其他城市（800元/月）", ("其他城市", 800.0))
+            self.city_combo.addItem(
+                "其他城市 · 800元/月", ("其他城市", 800.0)
+            )
         finally:
             self.city_combo.blockSignals(False)
 
@@ -1116,12 +1136,13 @@ class SalaryProfileTab(QScrollArea):
         )
         self.salary_table.setMinimumHeight(max(total, 2 * 32 + 34))
 
-    def _add_result_row(self, grid, row: int, key: str, title: str) -> QLabel:
-        label = QLabel(title)
-        label.setObjectName("fieldLabel")
+    def _add_result_row(
+        self, grid, row: int, key: str, title: str, info: str = ""
+    ) -> QLabel:
+        label_widget = info_label(title, info)
+        grid.addWidget(label_widget, row, 0)
         value = QLabel("-")
         value.setObjectName("summaryValue")
-        grid.addWidget(label, row, 0)
         grid.addWidget(value, row, 1)
         button = self._formula_button(key)
         if button is not None:

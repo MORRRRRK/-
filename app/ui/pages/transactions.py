@@ -150,7 +150,10 @@ class TransactionsPage(QScrollArea):
         self.refresh()
 
     def _build_deposit_section(self, layout) -> None:
-        section = Section("每月强制存款（独立维护，表面是支出，实际计入存款）")
+        section = Section(
+            "每月强制存款",
+            info="独立维护，表面按支出记录，实际计入累计存款",
+        )
         top = QHBoxLayout()
         top.addWidget(QLabel("年份"))
         years = sorted(
@@ -319,7 +322,7 @@ class TransactionsPage(QScrollArea):
             QMessageBox.information(
                 self,
                 "提示",
-                "请先把日期范围选择到具体某一天（起始日期 = 结束日期），"
+                "请先把日期范围选择到具体某一天，即起始日期等于结束日期，"
                 "再点击记支出/记收入，新记录会加到当天流水末尾。",
             )
             return
@@ -404,7 +407,7 @@ class TransactionsPage(QScrollArea):
         cutoff, ok = QInputDialog.getText(
             self,
             "删除历史记录",
-            "删除该日期之前的所有交易（留空删除全部）：\n格式 2026-01-01",
+            "删除该日期之前的所有交易，留空则删除全部：\n格式 2026-01-01",
         )
         if not ok:
             return

@@ -26,10 +26,12 @@ from ...services import llm, server_sync
 from ...services.release import DEFAULT_CODE_REPO
 from ...edition import is_customer
 from ..widgets import (
+    InfoIcon,
     NoWheelSpinBox,
     Section,
     confirm_delete,
     flash_saved,
+    info_label,
     line_edit,
     make_button,
 )
@@ -165,8 +167,9 @@ class SettingsPage(QScrollArea):
         self.llm_save_button = make_button("保存大模型设置", primary=True)
         self.llm_save_button.clicked.connect(self._save_llm)
         llm_section = Section(
-            "大模型报告设置（OpenAI 兼容接口）",
+            "大模型报告设置",
             actions=[self.llm_save_button],
+            info="使用 OpenAI 兼容接口，用于生成账单、工资、资产规划等报告",
         )
         llm_grid = QGridLayout()
         llm_grid.setHorizontalSpacing(24)
@@ -218,9 +221,18 @@ class SettingsPage(QScrollArea):
         self.web_status_label.setObjectName("summaryValue")
         self.web_status_label.setWordWrap(True)
         web_grid.addWidget(self.web_status_label, 3, 0, 1, 3)
-        self.web_firewall_button = make_button("开放防火墙（需管理员）")
+        self.web_firewall_button = make_button("开放防火墙")
         self.web_firewall_button.clicked.connect(self._open_firewall)
-        web_grid.addWidget(self.web_firewall_button, 4, 0)
+        firewall_widget = QWidget()
+        firewall_row = QHBoxLayout(firewall_widget)
+        firewall_row.setContentsMargins(0, 0, 0, 0)
+        firewall_row.setSpacing(4)
+        firewall_row.addWidget(self.web_firewall_button)
+        firewall_row.addWidget(
+            InfoIcon("开放防火墙需要管理员权限，用于手机访问局域网服务")
+        )
+        firewall_row.addStretch(1)
+        web_grid.addWidget(firewall_widget, 4, 0)
         web_note = QLabel(
             "开启后同一局域网的手机/电脑可用浏览器查看，Web 端只读；"
             "端口默认 8765，访问码用于登录保护。"
@@ -234,8 +246,9 @@ class SettingsPage(QScrollArea):
         self.cloud_save_button = make_button("保存云同步设置", primary=True)
         self.cloud_save_button.clicked.connect(self._save_cloud)
         cloud_section = Section(
-            "加密云同步（WebDAV，云端数据加密存储）",
+            "加密云同步",
             actions=[self.cloud_save_button],
+            info="通过 WebDAV 将数据库加密后存储到云端",
         )
         cloud_grid = QGridLayout()
         cloud_grid.setHorizontalSpacing(24)
@@ -256,7 +269,11 @@ class SettingsPage(QScrollArea):
         self.cloud_password_edit = QLineEdit()
         self.cloud_password_edit.setEchoMode(QLineEdit.Password)
         cloud_grid.addWidget(self.cloud_password_edit, 2, 1)
-        cloud_grid.addWidget(QLabel("同步密码（加密密钥）"), 2, 2)
+        cloud_grid.addWidget(
+            info_label("同步密码", "加密密钥，用于加密上传到云端的数据库"),
+            2,
+            2,
+        )
         self.cloud_key_edit = QLineEdit()
         self.cloud_key_edit.setEchoMode(QLineEdit.Password)
         cloud_grid.addWidget(self.cloud_key_edit, 2, 3)
@@ -295,8 +312,9 @@ class SettingsPage(QScrollArea):
         self.server_sync_save_button = make_button("保存互联设置", primary=True)
         self.server_sync_save_button.clicked.connect(self._save_server_sync)
         server_sync_section = Section(
-            "V4 手机互联（服务器同步）",
+            "V4 手机互联",
             actions=[self.server_sync_save_button],
+            info="通过本地同步服务器与手机端双向同步",
         )
         server_sync_grid = QGridLayout()
         server_sync_grid.setHorizontalSpacing(24)
@@ -312,7 +330,7 @@ class SettingsPage(QScrollArea):
         server_sync_grid.addWidget(self.server_sync_password_edit, 1, 1, 1, 3)
         server_sync_grid.addWidget(QLabel("用户名"), 2, 0)
         self.server_sync_username_edit = line_edit(
-            placeholder="注册/登录用户名（可留空使用服务器密码）"
+            placeholder="可留空，使用服务器密码登录"
         )
         server_sync_grid.addWidget(self.server_sync_username_edit, 2, 1, 1, 3)
         self.server_sync_status_label = QLabel("未登录")

@@ -32,11 +32,18 @@ from ..widgets import (
 )
 
 REPORT_TYPES = [
-    ("年度报告", "year"),
-    ("月度报告", "month"),
-    ("持仓分析报告", "holding"),
-    ("自定义时间段", "custom"),
+    ("账单报告", "bill"),
+    ("工资报告", "salary"),
+    ("资产规划建议", "planning"),
+    ("综合财务报告", "custom"),
 ]
+
+TYPE_NAMES = {
+    "bill": "账单报告",
+    "salary": "工资报告",
+    "planning": "资产规划建议",
+    "custom": "综合财务报告",
+}
 
 
 class ReportWorker(QThread):
@@ -95,7 +102,14 @@ class ReportsPage(QScrollArea):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        form_section = Section("生成智能报告（手动生成，不自动调用）")
+        form_section = Section(
+            "生成智能报告",
+            info=(
+                "报告为手动生成，不会自动调用接口。\n"
+                "账单报告参考记账流水，工资报告参考工资管理，"
+                "资产规划建议参考资产总览与规划结果。"
+            ),
+        )
         form = QHBoxLayout()
         self.type_combo = QComboBox()
         for label, value in REPORT_TYPES:
@@ -114,6 +128,7 @@ class ReportsPage(QScrollArea):
         form.addWidget(self.year_spin)
 
         self.month_combo = QComboBox()
+        self.month_combo.addItem("全年", 0)
         self.month_combo.addItems([f"{m} 月" for m in range(1, 13)])
         form.addWidget(self.month_combo)
 
@@ -191,8 +206,8 @@ class ReportsPage(QScrollArea):
 
     def _toggle_period_inputs(self) -> None:
         report_type = self.type_combo.currentData()
-        self.year_spin.setVisible(report_type in ("year", "month"))
-        self.month_combo.setVisible(report_type == "month")
+        self.year_spin.setVisible(report_type in ("bill", "salary", "planning"))
+        self.month_combo.setVisible(report_type in ("bill", "salary"))
         for label in self._period_labels:
             label.setVisible(report_type == "custom")
         self.start_date_edit.setVisible(report_type == "custom")
@@ -201,13 +216,17 @@ class ReportsPage(QScrollArea):
     def _report_values(self) -> tuple[str, str, str]:
         report_type = self.type_combo.currentData()
         year = int(self.year_spin.value())
-        if report_type == "year":
+        if report_type == "planning":
             return report_type, f"{year} 年", f"{year}-01-01~{year}-12-31"
-        if report_type == "month":
-            month = self.month_combo.currentIndex() + 1
-            return report_type, f"{year} 年 {month} 月", f"{year}-{month:02d}-01~{year}-{month:02d}-31"
-        if report_type == "holding":
-            return report_type, "持仓分析", ""
+        if report_type in ("bill", "salary"):
+            month = int(self.month_combo.currentData() or 0)
+            if month:
+                return (
+                    report_type,
+                    f"{year} 年 {month} 月",
+                    f"{year}-{month:02d}-01~{year}-{month:02d}-31",
+                )
+            return report_type, f"{year} 年", f"{year}-01-01~{year}-12-31"
         start = self.start_date_edit.date().toString("yyyy-MM-dd")
         end = self.end_date_edit.date().toString("yyyy-MM-dd")
         return report_type, f"{start} 至 {end}", f"{start}~{end}"
@@ -233,8 +252,12 @@ class ReportsPage(QScrollArea):
         report_type, title, period = self._report_values()
         self.status_label.setText("正在生成报告，请稍候…")
         self.generate_button.setEnabled(False)
+        start = period.split("~")[0] if "~" in period else ""
+        end = period.split("~")[1] if "~" in period else ""
         try:
-            context = llm.build_financial_context(self.conn)
+            context = llm.build_financial_context(
+                self.conn, report_type, start, end
+            )
         except Exception as exc:
             self.status_label.setText("")
             self.generate_button.setEnabled(True)
@@ -288,7 +311,7 @@ class ReportsPage(QScrollArea):
         self.reports_table.setRowCount(len(reports))
         for row, report in enumerate(reports):
             values = [
-                report["report_type"],
+                TYPE_NAMES.get(report["report_type"], report["report_type"]),
                 report["title"],
                 report["period_start"] + (f" ~ {report['period_end']}" if report["period_end"] else ""),
                 report["model"],

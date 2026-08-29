@@ -1,6 +1,6 @@
 import json
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS years (
@@ -263,6 +263,36 @@ CREATE TABLE IF NOT EXISTS ai_chat_state (
   updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
+CREATE TABLE IF NOT EXISTS spending_plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  total_budget REAL NOT NULL DEFAULT 0,
+  start_date TEXT NOT NULL DEFAULT '',
+  end_date TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS spending_plan_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_id INTEGER NOT NULL REFERENCES spending_plans(id) ON DELETE CASCADE,
+  name TEXT NOT NULL DEFAULT '未分项',
+  planned_amount REAL NOT NULL DEFAULT 0,
+  manual_actual REAL NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS spending_plan_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_id INTEGER NOT NULL REFERENCES spending_plans(id) ON DELETE CASCADE,
+  item_id INTEGER NOT NULL REFERENCES spending_plan_items(id) ON DELETE CASCADE,
+  transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  UNIQUE(plan_id, transaction_id)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -283,6 +313,10 @@ CREATE INDEX IF NOT EXISTS idx_trans_account ON transactions(account_id);
 CREATE INDEX IF NOT EXISTS idx_trans_category ON transactions(category_id);
 CREATE INDEX IF NOT EXISTS idx_holding_trans_holding ON holding_transactions(holding_id);
 CREATE INDEX IF NOT EXISTS idx_holding_trans_date ON holding_transactions(trans_date);
+CREATE INDEX IF NOT EXISTS idx_spending_items_plan ON spending_plan_items(plan_id);
+CREATE INDEX IF NOT EXISTS idx_spending_links_plan ON spending_plan_links(plan_id);
+CREATE INDEX IF NOT EXISTS idx_spending_links_item ON spending_plan_links(item_id);
+CREATE INDEX IF NOT EXISTS idx_spending_links_transaction ON spending_plan_links(transaction_id);
 """
 
 
