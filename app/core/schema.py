@@ -1,6 +1,6 @@
 import json
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS years (
@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS tax_params (
   mortgage_interest INTEGER NOT NULL DEFAULT 0,
   severe_illness_annual REAL NOT NULL DEFAULT 0,
   bonus_tax_method TEXT NOT NULL DEFAULT 'separate',
-  custom_deduction REAL NOT NULL DEFAULT 0
+  custom_deduction REAL NOT NULL DEFAULT 0,
+  personal_pension_annual REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS holdings (
@@ -225,6 +226,8 @@ CREATE TABLE IF NOT EXISTS pension_jobs (
   start_year INTEGER NOT NULL,
   end_year INTEGER NOT NULL,
   monthly_base REAL NOT NULL DEFAULT 0,
+  personal_rate REAL NOT NULL DEFAULT 0.08,
+  company_rate REAL NOT NULL DEFAULT 0.16,
   note TEXT NOT NULL DEFAULT ''
 );
 
@@ -528,6 +531,25 @@ def _ensure_columns(conn) -> None:
         conn.execute(
             "ALTER TABLE spending_plan_items "
             "ADD COLUMN voucher_path TEXT NOT NULL DEFAULT ''"
+        )
+    tax_columns = {row[1] for row in conn.execute("PRAGMA table_info(tax_params)")}
+    if "personal_pension_annual" not in tax_columns:
+        conn.execute(
+            "ALTER TABLE tax_params "
+            "ADD COLUMN personal_pension_annual REAL NOT NULL DEFAULT 0"
+        )
+    pension_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(pension_jobs)")
+    }
+    if "personal_rate" not in pension_columns:
+        conn.execute(
+            "ALTER TABLE pension_jobs "
+            "ADD COLUMN personal_rate REAL NOT NULL DEFAULT 0.08"
+        )
+    if "company_rate" not in pension_columns:
+        conn.execute(
+            "ALTER TABLE pension_jobs "
+            "ADD COLUMN company_rate REAL NOT NULL DEFAULT 0.16"
         )
 
 

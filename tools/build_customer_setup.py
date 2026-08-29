@@ -86,7 +86,12 @@ def build(version: str, desktop: Path, repo: str = "MORRRRRK/finance-releases") 
         "/r:System.Windows.Forms.dll",
         str(temp_cs),
     ]
-    result = subprocess.run(command, capture_output=True, text=True)
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
     if result.returncode != 0 or not output.exists():
         raise SystemExit("安装程序编译失败：\n" + result.stdout + result.stderr)
     return output

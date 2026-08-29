@@ -121,6 +121,7 @@ def build_customer() -> None:
             text=True,
             encoding="utf-8",
             errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode != 0:
             tail = (result.stdout or "")[-800:] + (result.stderr or "")[-800:]
@@ -194,6 +195,7 @@ def _git(args: list[str], cwd: Path) -> tuple[int, str]:
         text=True,
         encoding="utf-8",
         errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     return result.returncode, (result.stdout or "") + (result.stderr or "")
 

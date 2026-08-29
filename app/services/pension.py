@@ -68,6 +68,10 @@ def calculate_pension(
     personal_rate: float = 0.08,
 ) -> dict[str, Any]:
     """按一段工作记录估算退休后每月基本养老金。"""
+    personal_rate = float(
+        job.get("personal_rate", personal_rate) or personal_rate
+    )
+    company_rate = float(job.get("company_rate") or 0.16)
     province = (job.get("province") or "").strip()
     province_base = PROVINCE_BASES_2024.get(province, 0.0)
     monthly_base = float(job.get("monthly_base") or 0.0)
@@ -104,10 +108,53 @@ def calculate_pension(
         "contribution_years": years,
         "average_index": average_index,
         "indexed_wage": indexed_wage,
+        "personal_rate": personal_rate,
+        "company_rate": company_rate,
         "basic_pension": basic_pension,
         "personal_savings": personal_savings,
         "personal_pension": personal_pension,
         "total": total,
         "months": months,
         "warning": warning,
+    }
+
+
+def calculate_personal_pension(
+    enabled: bool,
+    annual: float,
+    return_rate: float,
+    start_year: int,
+    end_year: int,
+    retire_age: float = 60.0,
+) -> dict[str, Any]:
+    """估算个人养老金：按年缴存并模拟复利，退休后按计发月数逐月领取。"""
+    annual = max(0.0, float(annual or 0.0))
+    rate = max(0.0, min(1.0, float(return_rate or 0.0)))
+    years = max(0, int(end_year or 0) - int(start_year or 0) + 1)
+    if not enabled or annual <= 0 or years <= 0:
+        return {
+            "enabled": bool(enabled),
+            "years": years,
+            "contributed": 0.0,
+            "balance": 0.0,
+            "months": 0,
+            "monthly": 0.0,
+            "monthly_after_tax": 0.0,
+            "warning": "",
+        }
+    if rate > 0:
+        balance = annual * (((1.0 + rate) ** years - 1.0) / rate)
+    else:
+        balance = annual * years
+    months = months_for_age(retire_age)
+    monthly = balance / months if months else 0.0
+    return {
+        "enabled": True,
+        "years": years,
+        "contributed": annual * years,
+        "balance": balance,
+        "months": months,
+        "monthly": monthly,
+        "monthly_after_tax": monthly * 0.97,
+        "warning": "个人养老金领取环节按 3% 税率计征个税（估算）",
     }

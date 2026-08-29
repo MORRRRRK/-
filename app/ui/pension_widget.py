@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QGridLayout,
     QHBoxLayout,
@@ -30,31 +31,27 @@ from .widgets import (
 )
 
 PENSION_FORMULA_TEXT = (
-    "缴费指数 = 月缴费基数 ÷ 2024 年计发基数\n"
+    "平均缴费指数 = 月缴费基数 ÷ 2024 年计发基数（上限 3）\n"
     "基础养老金 = 计发基数×(1+平均缴费指数)÷2×缴费年限×1%\n"
     "个人账户养老金 = 个人账户储存额 ÷ 计发月数\n"
-    "个人账户储存额 = 月缴费基数×个人比例×12×缴费年限（未计利息）\n"
-    "月退休金 = 基础养老金 + 个人账户养老金；多段工作分别计算，以最新一份为准"
+    "个人账户储存额 = 月缴费基数×个人养老缴费比例×12×缴费年限（未计利息）\n"
+    "个人养老金月领 ≈ 账户余额 ÷ 计发月数，账户余额按年缴存并模拟年化复利\n"
+    "月退休金合计 = 最新工作基本养老金 + 个人养老金月领"
 )
 
 
 class PensionWidget(QWidget):
-    """退休金测算：按多段工作经历分别估算，以最新一份工作为准。"""
+    """退休金测算：多段工作经历 + 可选个人养老金，全部数据手填。"""
 
     def __init__(self, conn, on_change=None):
         super().__init__()
         self.conn = conn
         self.on_change = on_change
-        self._salary_payload: dict | None = None
         self._pension_rows: list[dict] = []
         self._pension_ids: list[int | None] = []
         self._deleted_pension_jobs: list[dict] = []
         self._build()
         self._reload_pension()
-
-    def set_salary_payload(self, payload: dict | None) -> None:
-        """接收当前工资方案，用于“从工资参数填充基数”。"""
-        self._salary_payload = payload
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
@@ -85,41 +82,33 @@ class PensionWidget(QWidget):
         self.retire_age_spin.setRange(40, 75)
         self.retire_age_spin.setValue(55.0)
         self.retire_age_spin.setAlignment(Qt.AlignRight)
-        self.pension_rate_spin = make_percent_spin(
-            self._salary_pension_rate()
-        )
         pension_form.addWidget(QLabel("性别"), 0, 0)
         pension_form.addWidget(self.gender_combo, 0, 1)
         pension_form.addWidget(QLabel("退休年龄"), 0, 2)
         pension_form.addWidget(self.retire_age_spin, 0, 3)
-        pension_form.addWidget(QLabel("个人养老缴费比例"), 0, 4)
-        pension_form.addWidget(self.pension_rate_spin, 0, 5)
-        pension_form.setColumnStretch(6, 1)
+        pension_form.setColumnStretch(4, 1)
 
         pension_note = QLabel(
-            "缴费指数按“月缴费基数 ÷ 2024 年计发基数”估算；"
-            "个人账户储存额按缴费基数 × 个人比例 × 12 × 年限估算，未计利息。"
+            "工作记录中的个人/企业养老缴费比例用于估算个人账户储存额，"
+            "所有数据均需手动填写。"
         )
         pension_note.setObjectName("fieldLabel")
         pension_note.setWordWrap(True)
-        pension_form.addWidget(pension_note, 1, 0, 1, 7)
+        pension_form.addWidget(pension_note, 1, 0, 1, 5)
 
         pension_buttons = QHBoxLayout()
         self.job_add_button = make_button("新增工作记录")
-        self.job_fill_button = make_button("从工资参数填充基数")
         self.job_delete_button = make_button("删除选中")
         self.job_undo_button = make_button("撤销删除")
         self.job_save_button = make_button("保存工作记录", primary=True)
         self.pension_calc_button = make_button("测算退休金")
         self.job_add_button.clicked.connect(self._add_pension_job)
-        self.job_fill_button.clicked.connect(self._fill_pension_bases)
         self.job_delete_button.clicked.connect(self._delete_pension_job)
         self.job_undo_button.clicked.connect(self._undo_pension_delete)
         self.job_save_button.clicked.connect(self._save_pension_jobs)
         self.pension_calc_button.clicked.connect(self._calculate_pension)
         for button in (
             self.job_add_button,
-            self.job_fill_button,
             self.job_delete_button,
             self.job_undo_button,
             self.job_save_button,
@@ -130,14 +119,23 @@ class PensionWidget(QWidget):
         section.add_layout(pension_form)
         section.add_layout(pension_buttons)
 
-        self.pension_table = QTableWidget(0, 6)
+        self.pension_table = QTableWidget(0, 8)
+        self.pension_table._enter_save = True
         self.pension_table.setHorizontalHeaderLabels(
-            ["工作名称", "省份", "开始年份", "结束年份", "月缴费基数", "备注"]
+            [
+                "工作名称", "省份", "开始年份", "结束年份",
+                "月缴费基数", "个人养老缴费比例(%)", "企业养老缴费比例(%)", "备注",
+            ]
         )
         self.pension_table.verticalHeader().setVisible(False)
-        self.pension_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.pension_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Stretch
+        )
+        self.pension_table.setMinimumHeight(6 * 34 + 34)
         section.add(self.pension_table)
         layout.addWidget(section)
+
+        self._build_personal_pension(layout)
 
         pension_result = Section(
             "测算结果",
@@ -154,44 +152,40 @@ class PensionWidget(QWidget):
         pension_result.add(self.pension_detail_result)
         layout.addWidget(pension_result)
 
+    def _build_personal_pension(self, layout) -> None:
+        self.pp_save_button = make_button("保存个人养老金", primary=True)
+        self.pp_save_button.clicked.connect(self._save_pension_settings)
+        section = Section(
+            "个人养老金",
+            actions=[self.pp_save_button],
+            info="每年缴存上限 12000 元，按计发月数估算退休后每月领取",
+        )
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(8)
+        self.pp_enabled_check = QCheckBox("是否缴纳个人养老金")
+        self.pp_enabled_check.toggled.connect(
+            lambda _: self._calculate_pension()
+        )
+        self.pp_annual_spin = make_money_spin(12000.0, 0.0, 1e7)
+        self.pp_return_spin = make_percent_spin(0.03)
+        self.pp_start_spin = self._year_spin(2024.0)
+        self.pp_end_spin = self._year_spin(2033.0)
+        grid.addWidget(self.pp_enabled_check, 0, 0, 1, 2)
+        grid.addWidget(QLabel("每年缴存金额"), 1, 0)
+        grid.addWidget(self.pp_annual_spin, 1, 1)
+        grid.addWidget(QLabel("预计年化收益率"), 1, 2)
+        grid.addWidget(self.pp_return_spin, 1, 3)
+        grid.addWidget(QLabel("开始缴存年份"), 2, 0)
+        grid.addWidget(self.pp_start_spin, 2, 1)
+        grid.addWidget(QLabel("结束缴存年份"), 2, 2)
+        grid.addWidget(self.pp_end_spin, 2, 3)
+        grid.setColumnStretch(4, 1)
+        section.add_layout(grid)
+        layout.addWidget(section)
+
     def refresh(self) -> None:
         self._reload_pension()
-
-    def _salary_pension_base(self) -> float:
-        payload = self._salary_payload
-        if payload:
-            for item in payload.get("items") or []:
-                if item.get("name") == "养老" and float(item.get("base") or 0) > 0:
-                    return float(item["base"])
-            params = payload.get("params") or {}
-            return float(params.get("monthly_salary") or 0.0)
-        years = repository.list_years(self.conn)
-        if not years:
-            return 0.0
-        year_id = years[-1]["id"]
-        for item in repository.list_insurance_items(self.conn, year_id):
-            if item["name"] == "养老" and float(item.get("base") or 0) > 0:
-                return float(item["base"])
-        params = repository.get_insurance_params(self.conn, year_id) or {}
-        return float(params.get("monthly_salary") or 0.0)
-
-    def _salary_pension_rate(self) -> float:
-        payload = self._salary_payload
-        if payload:
-            for item in payload.get("items") or []:
-                if item.get("name") == "养老":
-                    return float(item.get("personal_rate") or 0.08)
-            params = payload.get("params") or {}
-            return float(params.get("pension_personal_rate") or 0.08)
-        years = repository.list_years(self.conn)
-        if not years:
-            return 0.08
-        year_id = years[-1]["id"]
-        for item in repository.list_insurance_items(self.conn, year_id):
-            if item["name"] == "养老":
-                return float(item.get("personal_rate") or 0.08)
-        params = repository.get_insurance_params(self.conn, year_id) or {}
-        return float(params.get("pension_personal_rate") or 0.08)
 
     @staticmethod
     def _year_spin(value: float) -> NoWheelSpinBox:
@@ -218,18 +212,33 @@ class PensionWidget(QWidget):
         province_combo.setCurrentText(job["province"] if job else "")
         self.pension_table.setCellWidget(row, 1, province_combo)
 
-        start_spin = self._year_spin(float(job["start_year"] or 2010) if job else 2010.0)
+        start_spin = self._year_spin(
+            float(job["start_year"] or 2010) if job else 2010.0
+        )
         self.pension_table.setCellWidget(row, 2, start_spin)
-        end_spin = self._year_spin(float(job["end_year"] or 2024) if job else 2024.0)
+        end_spin = self._year_spin(
+            float(job["end_year"] or 2024) if job else 2024.0
+        )
         self.pension_table.setCellWidget(row, 3, end_spin)
 
-        base_spin = make_money_spin(float(job["monthly_base"] or 0.0) if job else 0.0)
+        base_spin = make_money_spin(
+            float(job["monthly_base"] or 0.0) if job else 0.0
+        )
         base_spin.setRange(0.0, 1e8)
         self.pension_table.setCellWidget(row, 4, base_spin)
 
+        personal_rate = make_percent_spin(
+            float(job.get("personal_rate") or 0.08) if job else 0.08
+        )
+        self.pension_table.setCellWidget(row, 5, personal_rate)
+        company_rate = make_percent_spin(
+            float(job.get("company_rate") or 0.16) if job else 0.16
+        )
+        self.pension_table.setCellWidget(row, 6, company_rate)
+
         note_item = QTableWidgetItem(job["note"] if job else "")
         note_item.setTextAlignment(Qt.AlignCenter)
-        self.pension_table.setItem(row, 5, note_item)
+        self.pension_table.setItem(row, 7, note_item)
 
     def _reload_pension(self) -> None:
         jobs = repository.list_pension_jobs(self.conn)
@@ -238,8 +247,8 @@ class PensionWidget(QWidget):
         self.pension_table.setRowCount(0)
         for job in jobs:
             self._append_pension_row(job)
-        if jobs:
-            self._calculate_pension()
+        self._load_pension_settings()
+        self._calculate_pension()
 
     def _pension_row_values(self, row: int) -> dict:
         province = self.pension_table.cellWidget(row, 1).currentText().strip()
@@ -248,26 +257,23 @@ class PensionWidget(QWidget):
             "province": province,
             "start_year": int(self.pension_table.cellWidget(row, 2).value()),
             "end_year": int(self.pension_table.cellWidget(row, 3).value()),
-            "monthly_base": float(self.pension_table.cellWidget(row, 4).value()),
-            "note": self.pension_table.item(row, 5).text().strip(),
+            "monthly_base": float(
+                self.pension_table.cellWidget(row, 4).value()
+            ),
+            "personal_rate": float(
+                self.pension_table.cellWidget(row, 5).value()
+            )
+            / 100.0,
+            "company_rate": float(
+                self.pension_table.cellWidget(row, 6).value()
+            )
+            / 100.0,
+            "note": self.pension_table.item(row, 7).text().strip(),
         }
 
     def _add_pension_job(self) -> None:
         self._append_pension_row()
         self.pension_table.setCurrentCell(self.pension_table.rowCount() - 1, 0)
-
-    def _fill_pension_bases(self) -> None:
-        base = self._salary_pension_base()
-        rate = self._salary_pension_rate()
-        self.pension_rate_spin.setValue(rate * 100.0)
-        for row in range(self.pension_table.rowCount()):
-            self.pension_table.cellWidget(row, 4).setValue(base)
-        if base > 0:
-            self.pension_main_result.setText(
-                f"已将月缴费基数填充为工资参数中的 {money(base)} 元"
-            )
-        else:
-            self.pension_main_result.setText("工资参数中暂无可用的养老缴费基数")
 
     def _delete_pension_job(self) -> None:
         row = self.pension_table.currentRow()
@@ -328,54 +334,122 @@ class PensionWidget(QWidget):
         if self.on_change:
             self.on_change()
 
+    def _load_pension_settings(self) -> None:
+        def get(key: str, default: str) -> str:
+            return repository.get_setting(self.conn, key, default)
+
+        self.pp_enabled_check.setChecked(
+            get("pension_enabled", "0") == "1"
+        )
+        self.pp_annual_spin.setValue(float(get("pension_annual", "12000")))
+        self.pp_return_spin.setValue(float(get("pension_return_rate", "0.03")))
+        self.pp_start_spin.setValue(float(get("pension_start_year", "2024")))
+        self.pp_end_spin.setValue(float(get("pension_end_year", "2033")))
+
+    def _save_pension_settings(self) -> None:
+        repository.set_setting(
+            self.conn,
+            "pension_enabled",
+            "1" if self.pp_enabled_check.isChecked() else "0",
+        )
+        repository.set_setting(
+            self.conn, "pension_annual", str(self.pp_annual_spin.value())
+        )
+        repository.set_setting(
+            self.conn, "pension_return_rate", str(self.pp_return_spin.value())
+        )
+        repository.set_setting(
+            self.conn, "pension_start_year", str(self.pp_start_spin.value())
+        )
+        repository.set_setting(
+            self.conn, "pension_end_year", str(self.pp_end_spin.value())
+        )
+        self.conn.commit()
+        flash_saved(self.pp_save_button)
+        self._calculate_pension()
+
+    def save(self) -> None:
+        self._save_pension_jobs()
+        self._save_pension_settings()
+
+    def undo(self) -> None:
+        self._undo_pension_delete()
+
     def _calculate_pension(self) -> None:
-        if self.pension_table.rowCount() == 0:
-            self.pension_main_result.setText("请先新增工作记录")
-            self.pension_detail_result.setText("")
-            return
         jobs = [
             self._pension_row_values(row)
             for row in range(self.pension_table.rowCount())
             if self._pension_row_values(row)["name"]
         ]
-        if not jobs:
-            self.pension_main_result.setText("请先填写工作名称")
-            self.pension_detail_result.setText("")
-            return
         retire_age = float(self.retire_age_spin.value())
-        personal_rate = float(self.pension_rate_spin.value()) / 100.0
         results = [
-            pension_service.calculate_pension(job, retire_age, personal_rate)
+            pension_service.calculate_pension(job, retire_age)
             for job in jobs
         ]
-        latest = max(results, key=lambda r: r["job"]["end_year"])
+        pp = pension_service.calculate_personal_pension(
+            self.pp_enabled_check.isChecked(),
+            float(self.pp_annual_spin.value()),
+            float(self.pp_return_spin.value()) / 100.0,
+            int(self.pp_start_spin.value()),
+            int(self.pp_end_spin.value()),
+            retire_age,
+        )
+
+        if not jobs and not pp["enabled"]:
+            self.pension_main_result.setText("请先新增工作记录或填写个人养老金")
+            self.pension_detail_result.setText("")
+            return
+
         total_years = sum(r["contribution_years"] for r in results)
         main_warning = (
             "累计缴费不足 15 年，通常不能按月领取职工养老金"
-            if total_years < 15
+            if 0 < total_years < 15
             else ""
         )
-        self.pension_main_result.setText(
-            f"最新工作“{latest['job']['name']}”：约 {money(latest['total'])} 元/月"
-            + (f"（{main_warning}）" if main_warning else "")
-        )
         lines = []
-        for index, result in enumerate(results, start=1):
-            job = result["job"]
+        latest_basic = 0.0
+        if results:
+            latest = max(results, key=lambda r: r["job"]["end_year"])
+            latest_basic = latest["total"]
             lines.append(
-                f"【工作{index}】{job['name']} · {job['province']} "
-                f"{job['start_year']}—{job['end_year']}（{result['contribution_years']} 年）"
+                f"最新工作“{latest['job']['name']}”：约 "
+                f"{money(latest['total'])} 元/月"
             )
-            job_warning = result["warning"]
-            if "不足 15 年" in job_warning and total_years >= 15:
-                job_warning = ""
-            if job_warning:
-                lines.append(f"提示：{job_warning}")
+            for index, result in enumerate(results, start=1):
+                job = result["job"]
+                lines.append(
+                    f"【工作{index}】{job['name']} · {job['province']} "
+                    f"{job['start_year']}—{job['end_year']}"
+                    f"（{result['contribution_years']} 年）"
+                )
+                job_warning = result["warning"]
+                if "不足 15 年" in job_warning and total_years >= 15:
+                    job_warning = ""
+                if job_warning:
+                    lines.append(f"提示：{job_warning}")
+                lines.append(
+                    f"基础养老金 {money(result['basic_pension'])} 元 + "
+                    f"个人账户养老金 {money(result['personal_pension'])} 元"
+                    f" = 约 {money(result['total'])} 元/月"
+                )
+
+        grand_total = latest_basic + pp["monthly"]
+        if pp["enabled"]:
             lines.append(
-                f"基础养老金 {money(result['basic_pension'])} 元 + "
-                f"个人账户养老金 {money(result['personal_pension'])} 元 "
-                f"= 约 {money(result['total'])} 元/月"
+                f"个人养老金：累计缴存 {money(pp['contributed'])} 元，"
+                f"按 {pp['years']} 年、年化 "
+                f"{float(self.pp_return_spin.value()):.2f}% 估算账户余额 "
+                f"{money(pp['balance'])} 元，按月领取约 "
+                f"{money(pp['monthly'])} 元/月（税后约 "
+                f"{money(pp['monthly_after_tax'])} 元）"
             )
+        if main_warning:
+            lines.insert(0, main_warning)
+        if pp["warning"] and pp["enabled"]:
+            lines.append(pp["warning"])
+        self.pension_main_result.setText(
+            f"预计月退休金合计：约 {money(grand_total)} 元/月"
+        )
         self.pension_detail_result.setText("\n".join(lines))
 
     def _gender_changed(self, text: str) -> None:

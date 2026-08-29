@@ -5,6 +5,7 @@ from datetime import datetime
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QAbstractScrollArea,
     QComboBox,
     QDateEdit,
@@ -105,17 +106,6 @@ class HoldingsPage(QWidget):
         self._build_accounts_section(layout)
 
         top = QHBoxLayout()
-        top.addWidget(QLabel("分类筛选"))
-        self.filter_combo = QComboBox()
-        self.filter_combo.addItems(["全部"] + CATEGORIES)
-        self.filter_combo.currentTextChanged.connect(self._reload_table)
-        self.filter_combo.setFixedWidth(100)
-        top.addWidget(self.filter_combo)
-        top.addWidget(QLabel("账户筛选"))
-        self.account_combo = QComboBox()
-        self.account_combo.currentIndexChanged.connect(self._reload_table)
-        self.account_combo.setMinimumWidth(140)
-        top.addWidget(self.account_combo)
         top.addStretch(1)
         self.summary_label = QLabel("")
         self.summary_label.setObjectName("summaryValue")
@@ -157,8 +147,26 @@ class HoldingsPage(QWidget):
         action_row.addWidget(self.save_button)
         layout.addLayout(action_row)
 
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems(["全部"] + CATEGORIES)
+        self.filter_combo.currentTextChanged.connect(self._reload_table)
+        self.filter_combo.setFixedWidth(96)
+        self.account_combo = QComboBox()
+        self.account_combo.currentIndexChanged.connect(self._reload_table)
+        self.account_combo.setMinimumWidth(120)
+        self.asset_combo = QComboBox()
+        self.asset_combo.addItems(
+            ["全部"] + [label for label, _value in ASSET_TYPES]
+        )
+        self.asset_combo.currentTextChanged.connect(self._reload_table)
+        self.asset_combo.setMinimumWidth(120)
         table_section = Section(
             "持仓列表",
+            actions=[
+                self.filter_combo,
+                self.account_combo,
+                self.asset_combo,
+            ],
             info="直接在表格中修改，点右上角“保存修改”后全部生效",
         )
         self.table = QTableWidget(0, 15)
@@ -268,7 +276,7 @@ class HoldingsPage(QWidget):
         self.accounts_table.doubleClicked.connect(
             lambda _: self._edit_account()
         )
-        self.accounts_table.setMinimumHeight(4 * 32 + 34)
+        self.accounts_table.setMinimumHeight(8 * 34 + 34)
         section.add(self.accounts_table)
         layout.addWidget(section)
 
@@ -462,11 +470,14 @@ class HoldingsPage(QWidget):
             if self.account_combo.count()
             else None
         )
+        asset_label = self.asset_combo.currentText()
+        asset_value = dict(ASSET_TYPES).get(asset_label, "")
         filtered = [
             h
             for h in holdings
             if category in ("全部", h["category"])
             and (account_id is None or h.get("account_id") == account_id)
+            and (not asset_value or h.get("asset_type") == asset_value)
         ]
         self._rows = []
         self._row_ids = []
@@ -911,8 +922,19 @@ class HoldingsPage(QWidget):
                 f"实时金价：{money(float(gold_price))} 元/克"
                 f"（{result.get('gold_date') or now}）"
             )
-        self.refresh()
-        self.on_change()
+        editing = (
+            self.table.state() == QAbstractItemView.EditingState
+            or self.gold_table.state() == QAbstractItemView.EditingState
+        )
+        if not editing:
+            self._reload_table()
+            self._reload_gold()
+        invest = calculations.investment_summary(self.conn)
+        self.summary_label.setText(
+            f"总持仓 {money(invest['total_holding'])}  |  "
+            f"累计收益 {money(invest['total_cumulative'])}  |  "
+            f"总收益率 {pct(invest['total_rate'])}"
+        )
         if show_popup:
             updated = int(result.get("updated") or 0)
             failed = result.get("failed") or []

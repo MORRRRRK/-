@@ -26,7 +26,7 @@
       {
         "id": "external-services",
         "label": "外部服务",
-        "focus": ["market", "llm", "cloud", "release"],
+        "focus": ["data_ai", "cloud_ops"],
         "note": "行情、大模型、坚果云与 GitHub 更新依赖。"
       }
     ]
@@ -45,7 +45,7 @@
       "type": "external",
       "label": "手机端",
       "sublabel": "App / 局域网浏览器",
-      "pos": [40, 420],
+      "pos": [40, 460],
       "size": [130, 60]
     },
     {
@@ -64,9 +64,9 @@
       "id": "core",
       "type": "backend",
       "label": "业务服务层",
-      "sublabel": "计算 · 工资 · 税务 · 持仓 · 规划 · 报告",
+      "sublabel": "计算 · 工资 · 持仓 · 报告",
       "pos": [470, 180],
-      "size": [170, 80],
+      "size": [210, 80],
       "sources": [
         { "path": "app/services/calculations.py", "label": "汇总计算" },
         { "path": "app/services/tax.py", "label": "个税与工资" }
@@ -77,8 +77,8 @@
       "type": "database",
       "label": "SQLite",
       "sublabel": "data/finance.db + 图片/导出/备份",
-      "pos": [720, 180],
-      "size": [160, 70],
+      "pos": [470, 360],
+      "size": [170, 70],
       "sources": [
         { "path": "app/core/schema.py", "label": "表结构与迁移" },
         { "path": "app/core/repository.py", "label": "数据访问" }
@@ -89,7 +89,7 @@
       "type": "backend",
       "label": "同步服务端",
       "sublabel": "finance-server",
-      "pos": [240, 420],
+      "pos": [240, 460],
       "size": [150, 60],
       "sources": [
         { "path": "app/services/server_sync.py", "label": "互联同步" }
@@ -100,55 +100,34 @@
       "type": "backend",
       "label": "局域网只读 Web",
       "sublabel": "手机/浏览器查看",
-      "pos": [470, 420],
+      "pos": [470, 460],
       "size": [150, 60],
       "sources": [
         { "path": "app/services/web_server.py", "label": "HTTP 服务" }
       ]
     },
     {
-      "id": "market",
+      "id": "data_ai",
       "type": "external",
-      "label": "行情接口",
-      "sublabel": "同花顺 · 东财 · 实时金价",
-      "pos": [950, 70],
+      "label": "行情与 AI",
+      "sublabel": "同花顺 / 东财 / 金价 / 大模型",
+      "pos": [1000, 180],
       "size": [160, 60],
       "sources": [
-        { "path": "app/services/market.py", "label": "同花顺客户端" }
+        { "path": "app/services/market.py", "label": "行情接口" },
+        { "path": "app/services/llm.py", "label": "大模型接口" }
       ]
     },
     {
-      "id": "llm",
+      "id": "cloud_ops",
       "type": "external",
-      "label": "大模型 API",
-      "sublabel": "智能报告 · 持仓问答",
-      "pos": [950, 180],
+      "label": "云端服务",
+      "sublabel": "坚果云备份 · GitHub 更新",
+      "pos": [1000, 420],
       "size": [160, 60],
       "sources": [
-        { "path": "app/services/llm.py", "label": "OpenAI 兼容接口" }
-      ]
-    },
-    {
-      "id": "cloud",
-      "type": "external",
-      "label": "坚果云 WebDAV",
-      "sublabel": "加密云同步",
-      "pos": [950, 290],
-      "size": [160, 60],
-      "sources": [
-        { "path": "app/services/cloud_sync.py", "label": "WebDAV 同步" }
-      ]
-    },
-    {
-      "id": "release",
-      "type": "external",
-      "label": "GitHub Releases",
-      "sublabel": "客户版在线更新",
-      "pos": [950, 400],
-      "size": [160, 60],
-      "sources": [
-        { "path": "app/services/updater.py", "label": "更新检查" },
-        { "path": "app/services/release.py", "label": "发布打包" }
+        { "path": "app/services/cloud_sync.py", "label": "WebDAV 同步" },
+        { "path": "app/services/updater.py", "label": "更新检查" }
       ]
     }
   ],
@@ -162,22 +141,20 @@
     {
       "kind": "region",
       "label": "外部服务",
-      "wraps": ["market", "llm", "cloud", "release"],
+      "wraps": ["data_ai", "cloud_ops"],
       "pad": 18
     }
   ],
   "connections": [
     { "id": "desktop-to-ui", "from": "desktop", "to": "ui", "label": "操作录入", "variant": "emphasis" },
     { "id": "ui-to-core", "from": "ui", "to": "core", "label": "调用服务", "variant": "emphasis" },
-    { "id": "core-to-db", "from": "core", "to": "db", "label": "SQLite 读写" },
-    { "id": "core-to-market", "from": "core", "to": "market", "label": "实时行情 / 定投" },
-    { "id": "core-to-llm", "from": "core", "to": "llm", "label": "报告 / 问答" },
-    { "id": "core-to-cloud", "from": "core", "to": "cloud", "label": "加密同步" },
-    { "id": "core-to-release", "from": "core", "to": "release", "label": "更新检查" },
-    { "id": "mobile-to-sync", "from": "mobile", "to": "sync", "label": "账号 / 数据同步", "variant": "emphasis" },
+    { "id": "core-to-db", "from": "core", "to": "db", "label": "SQLite 读写", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
+    { "id": "core-to-data-ai", "from": "core", "to": "data_ai", "label": "行情 / 报告 / 问答" },
+    { "id": "core-to-cloud-ops", "from": "core", "to": "cloud_ops", "label": "加密同步 / 更新" },
+    { "id": "mobile-to-sync", "from": "mobile", "to": "sync", "label": "账号 / 数据同步", "variant": "emphasis", "labelAt": [205, 534] },
     { "id": "sync-to-core", "from": "sync", "to": "core", "label": "双向同步", "variant": "dashed" },
-    { "id": "mobile-to-web", "from": "mobile", "to": "web", "label": "局域网只读", "variant": "dashed" },
-    { "id": "web-to-db", "from": "web", "to": "db", "label": "只读查询" }
+    { "id": "mobile-to-web", "from": "mobile", "to": "web", "label": "局域网只读", "variant": "dashed", "fromSide": "bottom", "toSide": "bottom", "via": [[105, 560], [545, 560], [545, 520]] },
+    { "id": "web-to-db", "from": "web", "to": "db", "label": "只读查询", "fromSide": "top", "toSide": "bottom", "labelAt": [558, 444] }
   ],
   "cards": [
     {

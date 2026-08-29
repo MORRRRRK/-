@@ -208,7 +208,19 @@ def special_deductions_monthly(params: dict[str, Any] | None) -> float:
     continuing = 400.0 if int(params.get("continuing_education") or 0) else 0.0
     mortgage = 1000.0 if int(params.get("mortgage_interest") or 0) else 0.0
     custom = float(params.get("custom_deduction") or 0.0)
-    return rent_tier + elderly + children + infant + continuing + mortgage + custom
+    personal_pension = min(
+        12000.0, float(params.get("personal_pension_annual") or 0.0)
+    ) / 12.0
+    return (
+        rent_tier
+        + elderly
+        + children
+        + infant
+        + continuing
+        + mortgage
+        + custom
+        + personal_pension
+    )
 
 
 def default_tax_params() -> dict[str, Any]:
@@ -225,6 +237,7 @@ def default_tax_params() -> dict[str, Any]:
         "severe_illness_annual": 0.0,
         "bonus_tax_method": "separate",
         "custom_deduction": 0.0,
+        "personal_pension_annual": 0.0,
     }
 
 

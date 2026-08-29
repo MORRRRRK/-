@@ -540,9 +540,11 @@ def add_pension_job(conn: sqlite3.Connection, job: dict[str, Any]) -> int:
     cur = conn.execute(
         """
         INSERT INTO pension_jobs(
-          name, province, start_year, end_year, monthly_base, note
+          name, province, start_year, end_year, monthly_base,
+          personal_rate, company_rate, note
         ) VALUES (
-          :name, :province, :start_year, :end_year, :monthly_base, :note
+          :name, :province, :start_year, :end_year, :monthly_base,
+          :personal_rate, :company_rate, :note
         )
         """,
         {
@@ -551,6 +553,8 @@ def add_pension_job(conn: sqlite3.Connection, job: dict[str, Any]) -> int:
             "start_year": int(job.get("start_year", 0)),
             "end_year": int(job.get("end_year", 0)),
             "monthly_base": float(job.get("monthly_base", 0.0) or 0.0),
+            "personal_rate": float(job.get("personal_rate", 0.08) or 0.08),
+            "company_rate": float(job.get("company_rate", 0.16) or 0.16),
             "note": job.get("note", ""),
         },
     )
@@ -565,7 +569,9 @@ def update_pension_job(
         UPDATE pension_jobs SET
           name = :name, province = :province,
           start_year = :start_year, end_year = :end_year,
-          monthly_base = :monthly_base, note = :note
+          monthly_base = :monthly_base,
+          personal_rate = :personal_rate, company_rate = :company_rate,
+          note = :note
         WHERE id = :id
         """,
         {
@@ -1010,6 +1016,15 @@ def update_spending_plan_item_voucher(
     conn.execute(
         "UPDATE spending_plan_items SET voucher_path = ? WHERE id = ?",
         (str(voucher_path or ""), item_id),
+    )
+
+
+def update_spending_plan_item_sort(
+    conn: sqlite3.Connection, item_id: int, sort_order: int
+) -> None:
+    conn.execute(
+        "UPDATE spending_plan_items SET sort_order = ? WHERE id = ?",
+        (int(sort_order), item_id),
     )
 
 

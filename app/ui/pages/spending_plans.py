@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QStyledItemDelegate,
     QStyleOptionViewItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -175,10 +176,20 @@ class SpendingPlansPage(QWidget):
             ]
         )
         self.items_table.verticalHeader().setVisible(False)
-        self.items_table.itemChanged.connect(self._on_item_changed)
+        self.items_table.verticalHeader().setSectionResizeMode(
+            QHeaderView.ResizeToContents
+        )
         self.items_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch
         )
+        self.items_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.Fixed
+        )
+        self.items_table.setColumnWidth(0, 44)
+        self.items_table.horizontalHeader().setSectionResizeMode(
+            7, QHeaderView.ResizeToContents
+        )
+        self.items_table.itemChanged.connect(self._on_item_changed)
         self.items_table.setMinimumHeight(6 * 32 + 34)
         items_section.add(self.items_table)
         layout.addWidget(items_section, 1)
@@ -301,10 +312,30 @@ class SpendingPlansPage(QWidget):
         note_item.setTextAlignment(Qt.AlignCenter)
         self.items_table.setItem(row, 6, note_item)
 
+        self._set_op_widget(row)
+        self._apply_row_lock(row)
+
+    def _set_op_widget(self, row: int) -> None:
+        self.items_table.removeCellWidget(row, 7)
         op = QWidget()
         op_layout = QHBoxLayout(op)
         op_layout.setContentsMargins(4, 2, 4, 2)
         op_layout.setSpacing(4)
+        op_layout.addStretch(1)
+        move_up = QToolButton()
+        move_up.setText("↑")
+        move_up.setToolTip("上移")
+        move_up.setFixedSize(26, 26)
+        move_up.clicked.connect(
+            lambda _=False, r=row: self._move_item(r, -1)
+        )
+        move_down = QToolButton()
+        move_down.setText("↓")
+        move_down.setToolTip("下移")
+        move_down.setFixedSize(26, 26)
+        move_down.clicked.connect(
+            lambda _=False, r=row: self._move_item(r, 1)
+        )
         link_button = make_button("关联流水")
         link_button.clicked.connect(
             lambda _=False, r=row: self._open_link_dialog(r)
@@ -313,11 +344,41 @@ class SpendingPlansPage(QWidget):
         voucher_button.clicked.connect(
             lambda _=False, r=row: self._open_voucher_dialog(r)
         )
+        op_layout.addWidget(move_up)
+        op_layout.addWidget(move_down)
         op_layout.addWidget(link_button)
         op_layout.addWidget(voucher_button)
         op_layout.addStretch(1)
         self.items_table.setCellWidget(row, 7, op)
-        self._apply_row_lock(row)
+
+    def _move_item(self, row: int, delta: int) -> None:
+        target = row + delta
+        if row < 0 or target < 0 or target >= len(self._item_ids):
+            return
+        self._swap_rows(row, target)
+        self.items_table.setCurrentCell(target, 1)
+        self.items_table.resizeRowsToContents()
+
+    def _swap_rows(self, row_a: int, row_b: int) -> None:
+        for col in range(self.items_table.columnCount()):
+            item_a = self.items_table.takeItem(row_a, col)
+            item_b = self.items_table.takeItem(row_b, col)
+            if item_a is not None:
+                self.items_table.setItem(row_b, col, item_a)
+            if item_b is not None:
+                self.items_table.setItem(row_a, col, item_b)
+        self._set_op_widget(row_a)
+        self._set_op_widget(row_b)
+        self._item_ids[row_a], self._item_ids[row_b] = (
+            self._item_ids[row_b],
+            self._item_ids[row_a],
+        )
+        self._item_rows[row_a], self._item_rows[row_b] = (
+            self._item_rows[row_b],
+            self._item_rows[row_a],
+        )
+        self._apply_row_lock(row_a)
+        self._apply_row_lock(row_b)
 
     def _apply_row_lock(self, row: int) -> None:
         """已完成分项锁定整行，取消勾选后恢复编辑。"""
@@ -413,7 +474,7 @@ class SpendingPlansPage(QWidget):
                 continue
             item = self._item_from_row(row)
             if item["id"] is None:
-                repository.add_spending_plan_item(
+                new_id = repository.add_spending_plan_item(
                     self.conn,
                     self._current_plan_id,
                     name,
@@ -422,6 +483,7 @@ class SpendingPlansPage(QWidget):
                     item["note"],
                     item["completed"],
                 )
+                self._item_ids[row] = new_id
             else:
                 repository.update_spending_plan_item(
                     self.conn,
@@ -431,6 +493,11 @@ class SpendingPlansPage(QWidget):
                     item["manual_actual"],
                     item["note"],
                     item["completed"],
+                )
+        for row, item_id in enumerate(self._item_ids):
+            if item_id is not None:
+                repository.update_spending_plan_item_sort(
+                    self.conn, item_id, row
                 )
         self.conn.commit()
         flash_saved(self.save_items_button)

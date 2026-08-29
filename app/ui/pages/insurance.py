@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIntValidator
+from PySide6.QtGui import QFont, QIntValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -254,7 +254,7 @@ class HistoryDialog(QDialog):
 
 
 class SalaryProfileTab(QScrollArea):
-    """单个工资方案页面：工资详情、N险N金、专项附加、个税汇总与退休金。"""
+    """单个工资方案页面：工资详情、N险N金、专项附加与个税汇总。"""
 
     def __init__(self, conn, profile: dict, on_change=None):
         super().__init__()
@@ -403,6 +403,7 @@ class SalaryProfileTab(QScrollArea):
         )
         self.items_table = QTableWidget(0, 5)
         self.items_table._enter_save = True
+        self.items_table.setFont(QFont("Microsoft YaHei UI", 12))
         self.items_table.setHorizontalHeaderLabels(
             ["名称", "基数", "个人比例(%)", "公司比例(%)", "个人固定金额"]
         )
@@ -453,12 +454,14 @@ class SalaryProfileTab(QScrollArea):
         self.severe_combo.addItem("享受", 1)
         self.severe_spin = make_money_spin(0.0, 0.0, 1e6)
         self.custom_spin = make_money_spin(0.0, 0.0, 1e6)
+        self.pension_deduction_spin = make_money_spin(0.0, 0.0, 12000.0)
 
         for spin in (
             self.children_spin,
             self.infant_spin,
             self.severe_spin,
             self.custom_spin,
+            self.pension_deduction_spin,
         ):
             spin.valueChanged.connect(lambda _: self._refresh_all_calculated())
         for combo in (
@@ -490,6 +493,7 @@ class SalaryProfileTab(QScrollArea):
             ("大病医疗", self.severe_combo),
             ("大病医疗年度金额", self.severe_spin),
             ("其他扣除", self.custom_spin),
+            ("个人养老金（年度）", self.pension_deduction_spin),
         ]
         deduction_info = {
             "赡养老人": "独生子女 3000元/月；非独生子女分摊 1500元/月",
@@ -500,6 +504,7 @@ class SalaryProfileTab(QScrollArea):
             "大病医疗": "大病医疗扣除按年度金额填写",
             "大病医疗年度金额": "仅在选择享受大病医疗时生效",
             "其他扣除": "其他可抵扣项目，按每月金额填写",
+            "个人养老金（年度）": "个人养老金每年缴存上限 12000 元，可在个税中扣除",
         }
         for index, (title, widget) in enumerate(deduction_items):
             cell = QVBoxLayout()
@@ -515,7 +520,7 @@ class SalaryProfileTab(QScrollArea):
         )
         note.setObjectName("fieldLabel")
         note.setWordWrap(True)
-        grid.addWidget(note, 3, 0, 1, 4)
+        grid.addWidget(note, 4, 0, 1, 4)
         section.add_layout(grid)
         layout.addWidget(section)
 
@@ -730,6 +735,12 @@ class SalaryProfileTab(QScrollArea):
             self.severe_spin.setValue(severe_annual)
             self.custom_spin.setValue(
                 float(params.get("custom_deduction") or 0.0)
+            )
+            self.pension_deduction_spin.setValue(
+                min(
+                    12000.0,
+                    float(params.get("personal_pension_annual") or 0.0),
+                )
             )
             self._set_frequency(
                 self.bonus_method_combo,
@@ -1130,6 +1141,9 @@ class SalaryProfileTab(QScrollArea):
             ),
             "bonus_tax_method": self.bonus_method_combo.currentData(),
             "custom_deduction": float(self.custom_spin.value()),
+            "personal_pension_annual": float(
+                self.pension_deduction_spin.value()
+            ),
         }
 
     def _resize_items_table(self) -> None:
@@ -1144,7 +1158,7 @@ class SalaryProfileTab(QScrollArea):
             + self.items_table.horizontalHeader().height()
             + 4
         )
-        self.items_table.setMinimumHeight(max(total, 4 * 32 + 34))
+        self.items_table.setMinimumHeight(max(total, 10 * 34 + 34))
 
     def _resize_salary_table(self) -> None:
         if not hasattr(self, "salary_table"):

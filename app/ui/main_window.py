@@ -90,6 +90,7 @@ class MainWindow(QMainWindow):
         self.nav.setFixedWidth(168)
         self.nav.setIndentation(12)
         self.nav.currentItemChanged.connect(self._on_nav_changed)
+        self.nav.itemClicked.connect(self._on_nav_item_clicked)
 
         self.stack = QStackedWidget()
         self.reports_page = ReportsPage(self.db.conn, self.refresh_all)
@@ -155,8 +156,6 @@ class MainWindow(QMainWindow):
         for item in (overview, ledger, salary, holdings, planning,
                      spending, reports, settings, about):
             self.nav.addTopLevelItem(item)
-        ledger.setExpanded(True)
-        salary.setExpanded(True)
 
     def _select_nav(self, index: int) -> None:
         if 0 <= index < len(self._nav_leaf_items):
@@ -166,13 +165,13 @@ class MainWindow(QMainWindow):
         if current is None:
             return
         index = current.data(0, Qt.UserRole)
-        if index is None:
-            self.nav.expandItem(current)
-            if current.childCount():
-                self.nav.setCurrentItem(current.child(0))
-            return
         if 0 <= index < self.stack.count():
             self.stack.setCurrentIndex(index)
+
+    def _on_nav_item_clicked(self, item, _column) -> None:
+        index = item.data(0, Qt.UserRole)
+        if index is None:
+            item.setExpanded(not item.isExpanded())
 
     def _global_save(self) -> None:
         page = self.stack.currentWidget()
