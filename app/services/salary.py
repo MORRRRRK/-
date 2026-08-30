@@ -86,6 +86,28 @@ def tax_params(payload: dict[str, Any] | None) -> dict[str, Any]:
     return result
 
 
+def default_monthly_pretax(payload: dict[str, Any] | None) -> float:
+    """默认月税前收入：基本工资 + 按月发放的绩效/补贴，不含13薪与年终奖。"""
+    data = payload or {}
+    p = params(payload)
+    monthly = float(p.get("monthly_salary") or 0.0)
+    extra = 0.0
+    for item in salary_items(payload):
+        if str(item.get("frequency") or "monthly") == "monthly":
+            extra += float(item.get("amount") or 0.0)
+    return monthly + extra
+
+
+def monthly_pretax(payload: dict[str, Any] | None) -> list[float]:
+    """返回 12 个月手填税前收入，未填写时按工资详情自动带出。"""
+    data = payload or {}
+    values = data.get("monthly_pretax") or []
+    if len(values) >= 12:
+        return [float(v or 0.0) for v in values[:12]]
+    default = default_monthly_pretax(payload)
+    return [default] * 12
+
+
 def social_result(payload: dict[str, Any] | None) -> dict[str, Any]:
     data = payload or {}
     return {

@@ -39,6 +39,7 @@ from ..widgets import (
     flash_saved,
     make_button,
     make_formula_button,
+    make_save_button,
     money,
     pct,
 )
@@ -125,8 +126,8 @@ class HoldingsPage(QWidget):
         self.resolve_button = make_button("按名称解析代码")
         self.refresh_button = make_button("刷新实时行情")
         self.history_button = make_button("查看交易")
-        self.save_button = make_button("保存修改", primary=True)
-        self.save_button.setMinimumSize(150, 42)
+        self.save_button = make_save_button("保存修改")
+        self.save_button.setMinimumSize(140, 28)
         self.add_row_button.clicked.connect(self._add_row)
         self.delete_row_button.clicked.connect(self._delete_row)
         self.undo_button.clicked.connect(self._undo_delete)
@@ -134,6 +135,7 @@ class HoldingsPage(QWidget):
         self.refresh_button.clicked.connect(lambda: self._refresh_market(show_popup=True))
         self.history_button.clicked.connect(self._show_history)
         self.save_button.clicked.connect(self._save_all)
+        action_row.addStretch(1)
         for button in (
             self.add_row_button,
             self.delete_row_button,
@@ -143,8 +145,6 @@ class HoldingsPage(QWidget):
             self.history_button,
         ):
             action_row.addWidget(button)
-        action_row.addStretch(1)
-        action_row.addWidget(self.save_button)
         layout.addLayout(action_row)
 
         self.filter_combo = QComboBox()
@@ -167,7 +167,8 @@ class HoldingsPage(QWidget):
                 self.account_combo,
                 self.asset_combo,
             ],
-            info="直接在表格中修改，点右上角“保存修改”后全部生效",
+            save_actions=[self.save_button],
+            info="直接在表格中修改，点“保存修改”后全部生效",
         )
         self.table = QTableWidget(0, 15)
         self.table._enter_save = True
@@ -185,16 +186,17 @@ class HoldingsPage(QWidget):
         table_section.add(self.table)
         layout.addWidget(table_section)
 
+        self.gold_save_button = make_save_button("保存黄金账户")
         gold_section = Section(
             "黄金账户",
             info="积存金 / 易存金按克记录，参考实时金价",
+            save_actions=[self.gold_save_button],
         )
         gold_top = QHBoxLayout()
         self.gold_refresh_button = make_button("刷新实时金价")
         self.gold_add_button = make_button("新增黄金账户")
         self.gold_delete_button = make_button("删除选中")
         self.gold_undo_button = make_button("撤销删除")
-        self.gold_save_button = make_button("保存黄金账户", primary=True)
         self.gold_refresh_button.clicked.connect(
             lambda: self._refresh_market(show_popup=True)
         )
@@ -204,12 +206,11 @@ class HoldingsPage(QWidget):
         self.gold_save_button.clicked.connect(self._save_gold)
         self.gold_price_label = QLabel("实时金价：未获取")
         self.gold_price_label.setObjectName("summaryValue")
+        gold_top.addStretch(1)
         gold_top.addWidget(self.gold_refresh_button)
         gold_top.addWidget(self.gold_add_button)
         gold_top.addWidget(self.gold_delete_button)
         gold_top.addWidget(self.gold_undo_button)
-        gold_top.addWidget(self.gold_save_button)
-        gold_top.addStretch(1)
         gold_top.addWidget(self.gold_price_label)
         if self._formula_enabled:
             gold_top.addWidget(

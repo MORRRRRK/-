@@ -78,6 +78,16 @@ def make_button(text: str, primary: bool = False) -> QPushButton:
     return btn
 
 
+def make_save_button(text: str) -> QPushButton:
+    """全局保存按钮：独立一行、靠右、尺寸适中。"""
+    btn = make_button(text, primary=True)
+    btn.setMinimumHeight(28)
+    font = btn.font()
+    font.setPointSize(max(font.pointSize(), 10))
+    btn.setFont(font)
+    return btn
+
+
 def make_formula_button(parent, title: str, text: str) -> QPushButton:
     """开发版“查看公式”按钮，点击弹出该计算结果的计算方式。"""
     button = make_button("查看公式")
@@ -269,6 +279,7 @@ class Section(QFrame):
         parent=None,
         actions: list | None = None,
         info: str = "",
+        save_actions: list | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("card")
@@ -285,6 +296,13 @@ class Section(QFrame):
         for action in actions or []:
             title_row.addWidget(action)
         layout.addLayout(title_row)
+        if save_actions:
+            save_row = QHBoxLayout()
+            save_row.setSpacing(8)
+            save_row.addStretch(1)
+            for action in save_actions:
+                save_row.addWidget(action)
+            layout.addLayout(save_row)
         self.body = QVBoxLayout()
         layout.addLayout(self.body)
 

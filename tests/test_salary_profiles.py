@@ -46,36 +46,35 @@ class SalaryProfileTest(unittest.TestCase):
         self.assertIsNone(repository.get_salary_profile(conn, profile_id))
         conn.close()
 
-    def test_profile_tax_schedule_matches_legacy(self) -> None:
+    def test_profile_tax_schedule_uses_manual_pretax_and_bonus(self) -> None:
         conn = self._conn()
         year_id = repository.ensure_year(conn, 2026)
-        conn.execute(
-            "INSERT INTO social_insurance_params(year_id, monthly_salary) "
-            "VALUES (?, 10000)",
-            (year_id,),
-        )
         repository.upsert_monthly_records(
             conn,
             year_id,
-            [{"month": 1, "salary": 10000.0}],
+            [
+                {"month": month, "salary": 10000.0}
+                for month in range(1, 13)
+            ]
+            + [{"month": 12, "year_end_bonus": 10000.0}],
         )
         conn.commit()
 
         payload = salary_service.default_payload(2026)
         payload["params"]["monthly_salary"] = 10000.0
-        from_profile = tax.monthly_schedule_profile(
+        separate = tax.monthly_schedule_profile(
             conn, 2026, payload, "separate"
         )
-        from_legacy = tax.monthly_schedule_actual(conn, year_id, "separate")
-        self.assertAlmostEqual(
-            from_profile["total_income"], from_legacy["total_income"]
+        combined = tax.monthly_schedule_profile(
+            conn, 2026, payload, "combined"
         )
-        self.assertAlmostEqual(
-            from_profile["total_tax"], from_legacy["total_tax"]
+        self.assertAlmostEqual(separate["pretax_total"], 120000.0)
+        self.assertAlmostEqual(separate["total_income"], 130000.0)
+        self.assertGreater(separate["bonus_tax"], 0.0)
+        self.assertNotAlmostEqual(
+            separate["bonus_tax"], combined["bonus_tax"]
         )
-        self.assertAlmostEqual(
-            from_profile["net_income"], from_legacy["net_income"]
-        )
+        self.assertAlmostEqual(separate["monthly_net"], combined["monthly_net"])
         conn.close()
 
     def test_year_summary_balance_fix(self) -> None:

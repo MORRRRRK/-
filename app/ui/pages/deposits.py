@@ -19,6 +19,7 @@ from ..widgets import (
     flash_saved,
     make_button,
     make_money_spin,
+    make_save_button,
     make_year_combo,
 )
 
@@ -41,9 +42,12 @@ class DepositsPage(QScrollArea):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
+        self.deposit_save_button = make_save_button("保存强制存款")
+        self.deposit_save_button.clicked.connect(self._save_deposits)
         section = Section(
             "每月强制存款",
             info="独立维护，表面按支出记录，实际计入累计存款",
+            save_actions=[self.deposit_save_button],
         )
         top = QHBoxLayout()
         top.addWidget(QLabel("年份"))
@@ -62,9 +66,6 @@ class DepositsPage(QScrollArea):
             lambda _: self._load_deposits()
         )
         top.addWidget(self.deposit_year_combo)
-        self.deposit_save_button = make_button("保存强制存款", primary=True)
-        self.deposit_save_button.clicked.connect(self._save_deposits)
-        top.addWidget(self.deposit_save_button)
         top.addStretch(1)
         section.add_layout(top)
 

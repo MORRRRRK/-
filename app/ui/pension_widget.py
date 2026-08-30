@@ -27,6 +27,7 @@ from .widgets import (
     make_formula_button,
     make_money_spin,
     make_percent_spin,
+    make_save_button,
     money,
 )
 
@@ -96,22 +97,26 @@ class PensionWidget(QWidget):
         pension_note.setWordWrap(True)
         pension_form.addWidget(pension_note, 1, 0, 1, 5)
 
+        job_save_row = QHBoxLayout()
+        self.job_save_button = make_save_button("保存工作记录")
+        self.job_save_button.clicked.connect(self._save_pension_jobs)
+        job_save_row.addStretch(1)
+        job_save_row.addWidget(self.job_save_button)
+        section.add_layout(job_save_row)
+
         pension_buttons = QHBoxLayout()
         self.job_add_button = make_button("新增工作记录")
         self.job_delete_button = make_button("删除选中")
         self.job_undo_button = make_button("撤销删除")
-        self.job_save_button = make_button("保存工作记录", primary=True)
         self.pension_calc_button = make_button("测算退休金")
         self.job_add_button.clicked.connect(self._add_pension_job)
         self.job_delete_button.clicked.connect(self._delete_pension_job)
         self.job_undo_button.clicked.connect(self._undo_pension_delete)
-        self.job_save_button.clicked.connect(self._save_pension_jobs)
         self.pension_calc_button.clicked.connect(self._calculate_pension)
         for button in (
             self.job_add_button,
             self.job_delete_button,
             self.job_undo_button,
-            self.job_save_button,
             self.pension_calc_button,
         ):
             pension_buttons.addWidget(button)
@@ -153,11 +158,11 @@ class PensionWidget(QWidget):
         layout.addWidget(pension_result)
 
     def _build_personal_pension(self, layout) -> None:
-        self.pp_save_button = make_button("保存个人养老金", primary=True)
+        self.pp_save_button = make_save_button("保存个人养老金")
         self.pp_save_button.clicked.connect(self._save_pension_settings)
         section = Section(
             "个人养老金",
-            actions=[self.pp_save_button],
+            save_actions=[self.pp_save_button],
             info="每年缴存上限 12000 元，按计发月数估算退休后每月领取",
         )
         grid = QGridLayout()

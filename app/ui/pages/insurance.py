@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QIntValidator
+from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -34,6 +34,7 @@ from ..widgets import (
     info_label,
     make_button,
     make_money_spin,
+    make_save_button,
     make_year_combo,
     money,
 )
@@ -47,6 +48,7 @@ class InsurancePage(QWidget):
         self.conn = conn
         self.on_change = on_change
         self._reloading = False
+        self._last_tab_index = 0
         self._build()
         self._reload_profiles()
 
@@ -90,29 +92,40 @@ class InsurancePage(QWidget):
             self._reloading = False
         if self.tabs.count():
             self.tabs.setCurrentIndex(0)
+            self._last_tab_index = 0
 
-    def _on_tab_changed(self, _index: int) -> None:
+    def _on_tab_changed(self, index: int) -> None:
         if self._reloading:
             return
-        self._persist_all_tabs()
+        old_tab = self.tabs.widget(self._last_tab_index)
+        if isinstance(old_tab, SalaryProfileTab) and old_tab.is_dirty():
+            choice = self.prompt_unsaved(old_tab)
+            if choice == "save":
+                old_tab._save_payload()
+            elif choice == "discard":
+                old_tab.discard_changes()
+            else:
+                self.tabs.blockSignals(True)
+                self.tabs.setCurrentIndex(self._last_tab_index)
+                self.tabs.blockSignals(False)
+                return
+        self._last_tab_index = index
 
-    def _persist_all_tabs(self) -> None:
-        for index in range(self.tabs.count()):
-            self._persist_tab(index)
-
-    def _persist_tab(self, index: int) -> None:
-        tab = self.tabs.widget(index)
-        if not isinstance(tab, SalaryProfileTab):
-            return
-        payload = tab.current_payload()
-        repository.save_salary_profile(
-            self.conn,
-            tab.profile_id,
-            tab.profile_name,
-            payload["year"],
-            payload,
-        )
-        self.conn.commit()
+    def prompt_unsaved(self, tab) -> str:
+        """有未保存修改时询问：返回 save / discard / cancel。"""
+        box = QMessageBox(self)
+        box.setWindowTitle("未保存的修改")
+        box.setText(f"“{tab.profile_name}”有未保存的修改，是否保存？")
+        save_button = box.addButton("保存", QMessageBox.AcceptRole)
+        discard_button = box.addButton("不保存", QMessageBox.DestructiveRole)
+        cancel_button = box.addButton("取消", QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is save_button:
+            return "save"
+        if clicked is discard_button:
+            return "discard"
+        return "cancel"
 
     def _close_tab(self, index: int) -> None:
         if self.tabs.count() <= 1:
@@ -121,7 +134,14 @@ class InsurancePage(QWidget):
         tab = self.tabs.widget(index)
         if not isinstance(tab, SalaryProfileTab):
             return
-        self._persist_tab(index)
+        if tab.is_dirty():
+            choice = self.prompt_unsaved(tab)
+            if choice == "cancel":
+                return
+            if choice == "save":
+                tab._save_payload()
+            elif choice == "discard":
+                tab.discard_changes()
         repository.set_salary_profile_open(self.conn, tab.profile_id, 0)
         self.conn.commit()
         self.tabs.removeTab(index)
@@ -135,7 +155,6 @@ class InsurancePage(QWidget):
         )
         if not ok or not name.strip():
             return
-        self._persist_all_tabs()
         active = self.tabs.currentWidget()
         if isinstance(active, SalaryProfileTab):
             year = active.current_payload()["year"]
@@ -266,6 +285,8 @@ class SalaryProfileTab(QScrollArea):
         self._deleted_rows: list[dict] = []
         self._deleted_salary_rows: list[dict] = []
         self._loading = False
+        self._dirty = False
+        self._table_updating = False
         self._formula_enabled = not is_customer()
         self.setWidgetResizable(True)
         self._content = QWidget()
@@ -296,7 +317,7 @@ class SalaryProfileTab(QScrollArea):
         self.year_combo.lineEdit().setValidator(QIntValidator(2000, 2100))
         self.year_combo.setFixedWidth(120)
         self.year_combo.currentTextChanged.connect(
-            lambda _: self._refresh_all_calculated()
+            lambda _: self._changed()
         )
         top.addWidget(self.year_combo)
         top.addStretch(1)
@@ -321,7 +342,7 @@ class SalaryProfileTab(QScrollArea):
         self.subsidy_button = make_button("新增补贴")
         self.salary_delete_button = make_button("删除选中")
         self.salary_undo_button = make_button("撤销删除")
-        self.salary_save_button = make_button("保存工资详情", primary=True)
+        self.salary_save_button = make_save_button("保存工资详情")
         self.performance_button.clicked.connect(self._add_performance_row)
         self.subsidy_button.clicked.connect(self._add_subsidy_row)
         self.salary_delete_button.clicked.connect(self._delete_salary_row)
@@ -334,8 +355,8 @@ class SalaryProfileTab(QScrollArea):
                 self.subsidy_button,
                 self.salary_delete_button,
                 self.salary_undo_button,
-                self.salary_save_button,
             ],
+            save_actions=[self.salary_save_button],
         )
         grid = QGridLayout()
         grid.setHorizontalSpacing(20)
@@ -358,12 +379,12 @@ class SalaryProfileTab(QScrollArea):
         grid.addWidget(QLabel("发放频率"), 1, 4)
         grid.addWidget(self.bonus_freq_combo, 1, 5)
         for spin in (self.base_spin, self.thirteen_coef_spin, self.bonus_coef_spin):
-            spin.valueChanged.connect(lambda _: self._refresh_all_calculated())
+            spin.valueChanged.connect(lambda _: self._changed())
         self.thirteen_freq_combo.currentIndexChanged.connect(
-            lambda _: self._refresh_all_calculated()
+            lambda _: self._changed()
         )
         self.bonus_freq_combo.currentIndexChanged.connect(
-            lambda _: self._refresh_all_calculated()
+            lambda _: self._changed()
         )
         section.add_layout(grid)
 
@@ -377,7 +398,7 @@ class SalaryProfileTab(QScrollArea):
         self.salary_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.salary_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.salary_table.itemChanged.connect(
-            lambda _: self._refresh_all_calculated()
+            lambda _: self._changed()
         )
         section.add(self.salary_table)
         layout.addWidget(section)
@@ -386,7 +407,7 @@ class SalaryProfileTab(QScrollArea):
         self.add_item_button = make_button("新增险种")
         self.delete_item_button = make_button("删除选中行")
         self.undo_delete_button = make_button("撤销删除")
-        self.items_save_button = make_button("保存N险N金", primary=True)
+        self.items_save_button = make_save_button("保存N险N金")
         self.add_item_button.clicked.connect(self._add_item_row)
         self.delete_item_button.clicked.connect(self._delete_item_row)
         self.undo_delete_button.clicked.connect(self._undo_delete_row)
@@ -398,12 +419,11 @@ class SalaryProfileTab(QScrollArea):
                 self.add_item_button,
                 self.delete_item_button,
                 self.undo_delete_button,
-                self.items_save_button,
             ],
+            save_actions=[self.items_save_button],
         )
         self.items_table = QTableWidget(0, 5)
         self.items_table._enter_save = True
-        self.items_table.setFont(QFont("Microsoft YaHei UI", 12))
         self.items_table.setHorizontalHeaderLabels(
             ["名称", "基数", "个人比例(%)", "公司比例(%)", "个人固定金额"]
         )
@@ -416,12 +436,12 @@ class SalaryProfileTab(QScrollArea):
         layout.addWidget(section, 1)
 
     def _build_deduction_section(self, layout) -> None:
-        self.deduction_save_button = make_button("保存专项附加扣除", primary=True)
+        self.deduction_save_button = make_save_button("保存专项附加扣除")
         self.deduction_save_button.clicked.connect(self._save_deduction)
         section = Section(
             "专项附加扣除",
             info="个税专项附加扣除项目，可按实际情况选择或填写",
-            actions=[self.deduction_save_button],
+            save_actions=[self.deduction_save_button],
         )
         grid = QGridLayout()
         grid.setHorizontalSpacing(20)
@@ -463,7 +483,7 @@ class SalaryProfileTab(QScrollArea):
             self.custom_spin,
             self.pension_deduction_spin,
         ):
-            spin.valueChanged.connect(lambda _: self._refresh_all_calculated())
+            spin.valueChanged.connect(lambda _: self._changed())
         for combo in (
             self.elderly_combo,
             self.continuing_combo,
@@ -471,7 +491,7 @@ class SalaryProfileTab(QScrollArea):
             self.severe_combo,
         ):
             combo.currentIndexChanged.connect(
-                lambda _: self._refresh_all_calculated()
+                lambda _: self._changed()
             )
 
         col = 0
@@ -532,45 +552,60 @@ class SalaryProfileTab(QScrollArea):
         self.bonus_method_combo.addItem("单独计税", "separate")
         self.bonus_method_combo.addItem("并入综合所得", "combined")
         self.bonus_method_combo.currentIndexChanged.connect(
-            lambda _: self._refresh_all_calculated()
+            lambda _: self._changed()
         )
         top.addWidget(self.bonus_method_combo)
         top.addStretch(1)
         section.add_layout(top)
 
-        grid = QGridLayout()
+        panels = QHBoxLayout()
         self.result_labels: dict[str, QLabel] = {}
-        rows = [
-            ("total_salary", "总工资", "按年合计的总工资"),
-            ("personal_total", "个人缴纳合计", "按每月缴纳合计"),
-            ("company_total", "公司缴纳合计", "按每月缴纳合计"),
-            ("gross_income", "税前总收入", "按年计算的税前总收入"),
-            ("total_package", "总包", "按年计算的公司总成本"),
-            ("total_income", "全年应税收入", "按实际月度流水汇总"),
-            ("taxable_income", "全年应纳税所得额", "扣除起征点与专项附加后的应税所得"),
-            ("wage_tax", "工资个税", "按累计预扣预缴估算"),
-            ("bonus_tax", "年终奖个税", "按所选计税方式计算"),
-            ("total_tax", "全年应缴个税", "工资个税 + 年终奖个税"),
-            ("net_income", "全年税后收入", "应税收入 - 五险一金 - 个税"),
-            ("monthly_net", "月均税后收入", "全年税后收入 ÷ 12"),
-        ]
-        for row, (key, title, info) in enumerate(rows):
+        left = Section("收入板块")
+        left_grid = QGridLayout()
+        for row, (key, title) in enumerate(
+            [
+                ("gross_income", "税前总收入"),
+                ("total_package", "总包"),
+                ("net_income", "全年税后收入"),
+                ("monthly_net", "月均税后收入"),
+            ]
+        ):
             self.result_labels[key] = self._add_result_row(
-                grid, row, key, title, info
+                left_grid, row, key, title
             )
-        section.add_layout(grid)
+        left.add_layout(left_grid)
 
-        self.actual_table = QTableWidget(12, 8)
+        right = Section("详细计算板块")
+        right_grid = QGridLayout()
+        for row, (key, title) in enumerate(
+            [
+                ("personal_total", "个人N险N金总计缴纳"),
+                ("company_total", "公司N险N金总计缴纳"),
+                ("total_income", "全年应税收入"),
+                ("wage_tax", "工资个税"),
+                ("bonus_tax", "年终奖个税"),
+            ]
+        ):
+            self.result_labels[key] = self._add_result_row(
+                right_grid, row, key, title
+            )
+        right.add_layout(right_grid)
+        panels.addWidget(left, 1)
+        panels.addWidget(right, 1)
+        section.add_layout(panels)
+
+        self.actual_table = QTableWidget(12, 9)
         self.actual_table.setHorizontalHeaderLabels(
             [
                 "月份",
+                "税前收入",
                 "当月收入",
                 "个人五险一金",
                 "当月专项附加",
                 "累计应税所得",
                 "累计已缴",
                 "当月个税",
-                "税后净收入",
+                "计算税后净收入",
             ]
         )
         self.actual_table.verticalHeader().setVisible(False)
@@ -579,10 +614,13 @@ class SalaryProfileTab(QScrollArea):
         self.actual_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.actual_table.setMinimumHeight(12 * 32 + 34)
         for row in range(12):
-            for col in range(8):
+            for col in range(9):
                 item = QTableWidgetItem("")
                 item.setTextAlignment(Qt.AlignCenter)
+                if col == 2:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 self.actual_table.setItem(row, col, item)
+        self.actual_table.itemChanged.connect(self._on_pretax_changed)
         section.add(self.actual_table)
         layout.addWidget(section)
 
@@ -661,9 +699,11 @@ class SalaryProfileTab(QScrollArea):
             self._load_tax_params()
         finally:
             self._loading = False
+        self._load_actual_table()
         self._refresh_all_calculated()
         self._resize_items_table()
         self._resize_salary_table()
+        self._dirty = False
 
     def _set_frequency(self, combo: QComboBox, value: str) -> None:
         index = combo.findData(value)
@@ -793,13 +833,13 @@ class SalaryProfileTab(QScrollArea):
         self._populate_cities(province)
         city_data = self.city_combo.currentData() or ("", 0.0)
         self._populate_districts(city_data[0])
-        self._refresh_all_calculated()
+        self._changed()
 
     def _city_changed(self) -> None:
         city_data = self.city_combo.currentData() or ("", 0.0)
         city = city_data[0]
         self._populate_districts(city)
-        self._refresh_all_calculated()
+        self._changed()
 
     def _populate_cities(self, province: str) -> None:
         self.city_combo.blockSignals(True)
@@ -869,7 +909,7 @@ class SalaryProfileTab(QScrollArea):
     def _add_item_row(self) -> None:
         self._append_item_row()
         self.items_table.setCurrentCell(self.items_table.rowCount() - 1, 0)
-        self._refresh_all_calculated()
+        self._changed()
 
     def _delete_item_row(self) -> None:
         row = self.items_table.currentRow()
@@ -880,7 +920,7 @@ class SalaryProfileTab(QScrollArea):
             return
         self._deleted_rows.append(item)
         self.items_table.removeRow(row)
-        self._refresh_all_calculated()
+        self._changed()
         self._resize_items_table()
 
     def _undo_delete_row(self) -> None:
@@ -888,7 +928,7 @@ class SalaryProfileTab(QScrollArea):
             QMessageBox.information(self, "提示", "没有可撤销的删除")
             return
         self._append_item_row(self._deleted_rows.pop())
-        self._refresh_all_calculated()
+        self._changed()
 
     def _append_salary_row(
         self, item_type: str, item: dict | None = None
@@ -928,12 +968,12 @@ class SalaryProfileTab(QScrollArea):
     def _add_performance_row(self) -> None:
         self._append_salary_row("performance")
         self.salary_table.setCurrentCell(self.salary_table.rowCount() - 1, 1)
-        self._refresh_all_calculated()
+        self._changed()
 
     def _add_subsidy_row(self) -> None:
         self._append_salary_row("subsidy")
         self.salary_table.setCurrentCell(self.salary_table.rowCount() - 1, 1)
-        self._refresh_all_calculated()
+        self._changed()
 
     def _delete_salary_row(self) -> None:
         row = self.salary_table.currentRow()
@@ -946,7 +986,7 @@ class SalaryProfileTab(QScrollArea):
             return
         self._deleted_salary_rows.append(item)
         self.salary_table.removeRow(row)
-        self._refresh_all_calculated()
+        self._changed()
         self._resize_salary_table()
 
     def _undo_salary_row(self) -> None:
@@ -955,7 +995,7 @@ class SalaryProfileTab(QScrollArea):
             return
         item = self._deleted_salary_rows.pop()
         self._append_salary_row(item.get("item_type", "performance"), item)
-        self._refresh_all_calculated()
+        self._changed()
 
     def _salary_item_from_row(self, row: int) -> dict:
         type_item = self.salary_table.item(row, 0)
@@ -1031,6 +1071,7 @@ class SalaryProfileTab(QScrollArea):
             "items": self._items_from_table(),
             "salary_items": self._salary_items_from_table(),
             "tax_params": self._tax_params_from_form(),
+            "monthly_pretax": self._monthly_pretax_values(),
         }
 
     def _save_salary(self) -> None:
@@ -1072,55 +1113,114 @@ class SalaryProfileTab(QScrollArea):
             payload,
         )
         self.conn.commit()
+        self._dirty = False
 
     def _on_insurance_changed(self, *_args) -> None:
-        self._refresh_all_calculated()
+        self._changed()
         self._resize_items_table()
+
+    def _changed(self) -> None:
+        if self._loading:
+            return
+        self._mark_dirty()
+        self._refresh_all_calculated()
+
+    def _mark_dirty(self) -> None:
+        self._dirty = True
+
+    def is_dirty(self) -> bool:
+        return self._dirty
+
+    def discard_changes(self) -> None:
+        profile = repository.get_salary_profile(self.conn, self.profile_id)
+        if profile:
+            self.payload = salary_service.decode_payload(
+                profile.get("payload")
+            )
+        self._load()
+
+    def _on_pretax_changed(self, item) -> None:
+        if (
+            item is None
+            or self._loading
+            or self._table_updating
+            or item.column() != 1
+        ):
+            return
+        self._changed()
+
+    def _monthly_pretax_values(self) -> list[float]:
+        values = []
+        for row in range(12):
+            item = self.actual_table.item(row, 1)
+            values.append(_parse_float(item.text()) if item else 0.0)
+        return values
+
+    def _load_actual_table(self) -> None:
+        if not hasattr(self, "actual_table"):
+            return
+        pretax = salary_service.monthly_pretax(self.payload)
+        year_id = repository.ensure_year(self.conn, self._current_year())
+        records = repository.get_monthly_records(self.conn, year_id)
+        self._table_updating = True
+        try:
+            for row in range(12):
+                rec = records.get(row + 1, {})
+                recorded = (
+                    float(rec.get("salary") or 0.0)
+                    + float(rec.get("year_end_bonus") or 0.0)
+                    + float(rec.get("subsidies") or 0.0)
+                )
+                self.actual_table.item(row, 0).setText(f"{row + 1} 月")
+                self.actual_table.item(row, 1).setText(f"{pretax[row]:.2f}")
+                self.actual_table.item(row, 2).setText(money(recorded))
+        finally:
+            self._table_updating = False
 
     def _refresh_all_calculated(self) -> None:
         if self._loading or not hasattr(self, "result_labels"):
             return
         payload = self.current_payload()
-        social = salary_service.social_result(payload)
-        values = {
-            "total_salary": money(social["total_salary"]),
-            "personal_total": money(social["personal_total"]),
-            "company_total": money(social["company_total"]),
-            "gross_income": money(social["gross_income"]),
-            "total_package": money(social["total_package"]),
-        }
-        for key, text in values.items():
-            self.result_labels[key].setText(text)
-
         actual = tax_service.monthly_schedule_profile(
             self.conn,
             payload["year"],
             payload,
             self.bonus_method_combo.currentData(),
         )
-        actual_values = {
-            "total_income": money(actual["total_income"]),
-            "taxable_income": money(actual["taxable_income"]),
-            "wage_tax": money(actual["wage_tax"]),
-            "bonus_tax": money(actual["bonus_tax"]),
-            "total_tax": money(actual["total_tax"]),
+        gross_income = actual["total_income"]
+        values = {
+            "gross_income": money(gross_income),
+            "total_package": money(gross_income + actual["company_total"]),
             "net_income": money(actual["net_income"]),
             "monthly_net": money(actual["monthly_net"]),
+            "personal_total": money(actual["personal_total"]),
+            "company_total": money(actual["company_total"]),
+            "total_income": money(actual["total_income"]),
+            "wage_tax": money(actual["wage_tax"]),
+            "bonus_tax": money(actual["bonus_tax"]),
         }
-        for key, text in actual_values.items():
+        for key, text in values.items():
             self.result_labels[key].setText(text)
-        for row, item in enumerate(actual["monthly_schedule"]):
-            for col, key in [
-                (1, "gross"),
-                (2, "personal_insurance"),
-                (3, "special_deduction"),
-                (4, "taxable_income"),
-                (5, "cumulative_tax"),
-                (6, "month_tax"),
-                (7, "net_income"),
-            ]:
-                self.actual_table.item(row, col).setText(money(item[key]))
-            self.actual_table.item(row, 0).setText(f"{row + 1} 月")
+        self._table_updating = True
+        try:
+            for row, item in enumerate(actual["monthly_schedule"]):
+                self.actual_table.item(row, 0).setText(f"{row + 1} 月")
+                self.actual_table.item(row, 1).setText(
+                    f"{item['pretax']:.2f}"
+                )
+                for col, key in [
+                    (3, "personal_insurance"),
+                    (4, "special_deduction"),
+                    (5, "taxable_income"),
+                    (6, "cumulative_tax"),
+                    (7, "month_tax"),
+                    (8, "net_income"),
+                ]:
+                    self.actual_table.item(row, col).setText(
+                        money(item[key])
+                    )
+        finally:
+            self._table_updating = False
 
     def _tax_params_from_form(self) -> dict:
         rent_city, rent_tier = self.city_combo.currentData() or ("", 0.0)
@@ -1201,21 +1301,13 @@ class SalaryProfileTab(QScrollArea):
     @staticmethod
     def _formula_text(key: str) -> str:
         texts = {
-            "total_salary": (
-                "总工资 = 基本工资×12 + 13薪×基本工资×发放次数\n"
-                "+ 年终奖×基本工资×发放次数\n"
-                "+ Σ(绩效金额×发放次数) + Σ(补贴金额×发放次数)\n"
-                "发放次数：按月=12，按季=4，按年=1"
+            "personal_total": (
+                "个人N险N金总计缴纳 = Σ(险种基数×个人比例)×12 + Σ个人固定金额×12"
             ),
-            "personal_total": "个人五险一金（月） = Σ(险种基数×个人比例) + Σ个人固定金额",
-            "company_total": "公司五险一金（月） = Σ(险种基数×公司比例)",
-            "gross_income": "税前总收入 = 总工资 - 个人五险一金×12",
-            "total_package": "总包 = 税前总收入 + 公司五险一金×12",
-            "total_income": "全年应税收入 = Σ(月工资 + 年终奖 + 各类补贴)",
-            "taxable_income": (
-                "全年应纳税所得额 = 全年应税收入 - 个人五险一金×12\n"
-                "- 60000（起征点5000×12）- 专项附加扣除×12 - 大病医疗"
-            ),
+            "company_total": "公司N险N金总计缴纳 = Σ(险种基数×公司比例)×12",
+            "gross_income": "税前总收入 = Σ12个月手填税前收入 + 年终奖金额",
+            "total_package": "总包 = 税前总收入 + 公司N险N金×12",
+            "total_income": "全年应税收入 = Σ12个月手填税前收入 + 年终奖金额",
             "wage_tax": (
                 "工资个税按累计预扣预缴：逐月累计应税所得，"
                 "按月计算累计应缴个税后减去已预缴"
@@ -1224,9 +1316,8 @@ class SalaryProfileTab(QScrollArea):
                 "年终奖单独计税：年终奖÷12 查月度税率表\n"
                 "税额 = 年终奖×税率 - 速算扣除数"
             ),
-            "total_tax": "全年应缴个税 = 工资个税 + 年终奖个税",
             "net_income": (
-                "全年税后收入 = 全年应税收入 - 个人五险一金×12 - 全年应缴个税"
+                "全年税后收入 = Σ(月税前收入+当月年终奖 - 个人N险N金 - 当月个税)"
             ),
             "monthly_net": "月均税后收入 = 全年税后收入 ÷ 12",
         }

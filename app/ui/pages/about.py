@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QProgressBar,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -18,7 +19,27 @@ from ...services.release import DEFAULT_CODE_REPO, DEFAULT_REPO
 from ..release_worker import ReleasePushWorker
 from ..widgets import make_button
 
-CHANGELOG = """V4.6.3
+CHANGELOG = """V4.6.5.2
+· 关于页更新说明支持滚动查看全部历史版本
+
+V4.6.5.1
+· 保存按钮缩小一半并统一靠右排列
+· 修复分项拖拽移动后数据短暂消失，重建过程不再闪烁
+
+V4.6.5
+· 消费计划分项拖拽只能在表格内上下排序，禁止左右与拖出区域，移动后数据完整保留
+· 消费计划“保存分项”独立一行并放大，新增/置顶/置尾/删除/撤销移到下方
+· 全软件蓝色保存按钮统一独立一行并放大两倍
+
+V4.6.4
+· 消费计划分项支持拖拽排序，标题栏新增“置顶/置尾”，删除逐行上下按钮
+· N险N金恢复统一字号，仍至少展示 10 行
+· 自动计算结果与全年个税汇总拆分为“收入板块”和“详细计算板块”左右两栏
+· 12 个月明细新增“税前收入”手填列和“计算税后净收入”，实时重算
+· 年终奖计税方式实时生效，不再依赖保存
+· 未保存修改时切换页面/工资方案会提示“保存/不保存/取消”
+
+V4.6.3
 · 侧边栏记账流水、工资管理改为点击展开/收起
 · 消费计划分项可上移/下移排序，新顺序保存后生效，已完成行也可移动
 · 完成列与操作列自适应宽度，操作按钮居中显示
@@ -257,12 +278,16 @@ class AboutPage(QWidget):
         info.setObjectName("fieldLabel")
         layout.addWidget(info)
 
+        changelog_scroll = QScrollArea()
+        changelog_scroll.setWidgetResizable(True)
+        changelog_scroll.setObjectName("card")
+        changelog_scroll.setMinimumHeight(260)
         changelog = QLabel(CHANGELOG)
-        changelog.setObjectName("card")
         changelog.setWordWrap(True)
         changelog.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         changelog.setContentsMargins(16, 12, 16, 12)
-        layout.addWidget(changelog, 1)
+        changelog_scroll.setWidget(changelog)
+        layout.addWidget(changelog_scroll, 1)
 
         update_row = QHBoxLayout()
         self.check_update_button = make_button("检查更新", primary=True)

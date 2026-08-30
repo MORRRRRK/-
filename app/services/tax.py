@@ -362,15 +362,105 @@ def monthly_schedule_profile(
     payload: dict[str, Any],
     method_override: str | None = None,
 ) -> dict[str, Any]:
-    """按工资方案 payload 与实际月度流水计算累计预扣预缴。"""
+    """按工资方案 payload 与 12 个月手填税前收入计算累计预扣预缴。"""
+    from . import salary as salary_service
+
+    return monthly_schedule_pretax(
+        conn,
+        year,
+        payload,
+        salary_service.monthly_pretax(payload),
+        method_override,
+    )
+
+
+def monthly_schedule_pretax(
+    conn: sqlite3.Connection,
+    year: int,
+    payload: dict[str, Any],
+    monthly_pretax: list[float] | None = None,
+    method_override: str | None = None,
+) -> dict[str, Any]:
+    """按 12 个月手填税前收入 + 工资详情年终奖计算累计预扣预缴。"""
     from . import salary as salary_service
 
     social = salary_service.social_result(payload)
     tax_params = salary_service.tax_params(payload)
-    year_id = repository.ensure_year(conn, year)
-    return _monthly_schedule(
-        conn, year_id, social, tax_params, method_override
+    pretax = [float(v or 0.0) for v in (monthly_pretax or [])] + [0.0] * 12
+    pretax = pretax[:12]
+    personal_monthly = float(social.get("personal_total") or 0.0)
+    company_monthly = float(social.get("company_total") or 0.0)
+    special_monthly = special_deductions_monthly(tax_params)
+    bonus_annual = float(social.get("bonus_annual") or 0.0)
+    method = (
+        method_override
+        or str(tax_params.get("bonus_tax_method") or "separate")
     )
+    combined = method != "separate"
+    bonus_tax = annual_bonus_tax(bonus_annual) if not combined else 0.0
+
+    schedule = []
+    cumulative_income = 0.0
+    cumulative_deduction = 0.0
+    cumulative_insurance = 0.0
+    paid_before = 0.0
+    for month in range(1, 13):
+        base_income = pretax[month - 1]
+        bonus_part = bonus_annual if (combined and month == 12) else 0.0
+        income = base_income + bonus_part
+        gross = base_income + (bonus_annual if month == 12 else 0.0)
+        cumulative_income += income
+        cumulative_deduction += STANDARD_DEDUCTION_MONTHLY + special_monthly
+        cumulative_insurance += personal_monthly
+        taxable_cumulative = max(
+            0.0,
+            cumulative_income - cumulative_deduction - cumulative_insurance,
+        )
+        cumulative_wage_tax = income_tax(taxable_cumulative)
+        if month == 12 and not combined:
+            current_total = cumulative_wage_tax + bonus_tax
+        else:
+            current_total = cumulative_wage_tax
+        month_tax = max(0.0, current_total - paid_before)
+        paid_before = current_total
+        schedule.append(
+            {
+                "month": month,
+                "pretax": base_income,
+                "gross": gross,
+                "personal_insurance": personal_monthly,
+                "special_deduction": special_monthly,
+                "taxable_income": taxable_cumulative,
+                "cumulative_tax": cumulative_wage_tax,
+                "paid_before": paid_before,
+                "month_tax": month_tax,
+                "net_income": gross - personal_monthly - month_tax,
+            }
+        )
+
+    wage_tax = cumulative_wage_tax
+    total_tax = wage_tax + bonus_tax
+    pretax_total = sum(pretax)
+    total_income = pretax_total + bonus_annual
+    net_income = sum(s["net_income"] for s in schedule)
+    return {
+        "has_params": bool(social.get("has_params")),
+        "monthly_pretax": pretax,
+        "pretax_total": pretax_total,
+        "total_income": total_income,
+        "bonus_annual": bonus_annual,
+        "personal_total": personal_monthly * 12.0,
+        "company_total": company_monthly * 12.0,
+        "taxable_income": schedule[-1]["taxable_income"] if schedule else 0.0,
+        "special_monthly": special_monthly,
+        "wage_tax": wage_tax,
+        "bonus_tax": bonus_tax,
+        "total_tax": total_tax,
+        "net_income": net_income,
+        "monthly_net": net_income / 12.0 if schedule else 0.0,
+        "monthly_schedule": schedule,
+        "bonus_method": method,
+    }
 
 
 def _monthly_schedule(

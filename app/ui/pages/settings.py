@@ -33,6 +33,7 @@ from ..widgets import (
     info_label,
     line_edit,
     make_button,
+    make_save_button,
 )
 
 THEMES = [
@@ -85,9 +86,9 @@ class SettingsPage(QScrollArea):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(14)
 
-        self.common_save_button = make_button("保存常用设置", primary=True)
+        self.common_save_button = make_save_button("保存常用设置")
         self.common_save_button.clicked.connect(self._save_common)
-        section = Section("常用设置", actions=[self.common_save_button])
+        section = Section("常用设置", save_actions=[self.common_save_button])
         grid = QGridLayout()
         grid.setHorizontalSpacing(24)
         grid.setVerticalSpacing(10)
@@ -164,11 +165,11 @@ class SettingsPage(QScrollArea):
         section.add_layout(grid)
         layout.addWidget(section)
 
-        self.llm_save_button = make_button("保存大模型设置", primary=True)
+        self.llm_save_button = make_save_button("保存大模型设置")
         self.llm_save_button.clicked.connect(self._save_llm)
         llm_section = Section(
             "大模型报告设置",
-            actions=[self.llm_save_button],
+            save_actions=[self.llm_save_button],
             info="使用 OpenAI 兼容接口，用于生成账单、工资、资产规划等报告",
         )
         llm_grid = QGridLayout()
@@ -200,9 +201,9 @@ class SettingsPage(QScrollArea):
         llm_section.add_layout(llm_grid)
         layout.addWidget(llm_section)
 
-        self.web_save_button = make_button("保存局域网设置", primary=True)
+        self.web_save_button = make_save_button("保存局域网设置")
         self.web_save_button.clicked.connect(self._save_web)
-        web_section = Section("局域网只读访问", actions=[self.web_save_button])
+        web_section = Section("局域网只读访问", save_actions=[self.web_save_button])
         web_grid = QGridLayout()
         web_grid.setHorizontalSpacing(24)
         web_grid.setVerticalSpacing(10)
@@ -240,11 +241,11 @@ class SettingsPage(QScrollArea):
         web_section.add_layout(web_grid)
         layout.addWidget(web_section)
 
-        self.cloud_save_button = make_button("保存云同步设置", primary=True)
+        self.cloud_save_button = make_save_button("保存云同步设置")
         self.cloud_save_button.clicked.connect(self._save_cloud)
         cloud_section = Section(
             "加密云同步",
-            actions=[self.cloud_save_button],
+            save_actions=[self.cloud_save_button],
             info="通过 WebDAV 将数据库加密后存储到云端",
         )
         cloud_grid = QGridLayout()
@@ -306,11 +307,11 @@ class SettingsPage(QScrollArea):
         cloud_section.add(cloud_note)
         layout.addWidget(cloud_section)
 
-        self.server_sync_save_button = make_button("保存互联设置", primary=True)
+        self.server_sync_save_button = make_save_button("保存互联设置")
         self.server_sync_save_button.clicked.connect(self._save_server_sync)
         server_sync_section = Section(
             "V4 手机互联",
-            actions=[self.server_sync_save_button],
+            save_actions=[self.server_sync_save_button],
             info="通过本地同步服务器与手机端双向同步",
         )
         server_sync_grid = QGridLayout()

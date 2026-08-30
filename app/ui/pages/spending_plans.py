@@ -6,6 +6,7 @@ from datetime import datetime
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -23,7 +24,6 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QStyledItemDelegate,
     QStyleOptionViewItem,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -39,8 +39,46 @@ from ..widgets import (
     line_edit,
     make_button,
     make_money_spin,
+    make_save_button,
     money,
 )
+
+
+class ReorderableItemsTable(QTableWidget):
+    """支持拖拽整行排序的表格，拖放后回调页面重新排序列。"""
+
+    def __init__(self, rows: int = 0, cols: int = 0):
+        super().__init__(rows, cols)
+        self._drag_row = -1
+        self._reorder_callback = None
+
+    def set_reorder_callback(self, callback) -> None:
+        self._reorder_callback = callback
+
+    def startDrag(self, supportedActions) -> None:
+        self._drag_row = self.currentRow()
+        super().startDrag(supportedActions)
+
+    def dropEvent(self, event) -> None:
+        if self._drag_row < 0 or self._reorder_callback is None:
+            super().dropEvent(event)
+            return
+        if hasattr(event.position(), "toPoint"):
+            pos = event.position().toPoint()
+        else:
+            pos = event.pos()
+        if not self.viewport().rect().contains(pos):
+            self._drag_row = -1
+            event.ignore()
+            return
+        target = self.indexAt(pos).row()
+        source = self._drag_row
+        self._drag_row = -1
+        if target < 0 or source == target:
+            event.ignore()
+            return
+        self._reorder_callback(source, target)
+        event.accept()
 
 
 class SpendingPlansPage(QWidget):
@@ -87,11 +125,11 @@ class SpendingPlansPage(QWidget):
         toolbar.addStretch(1)
         layout.addLayout(toolbar)
 
-        self.plan_save_button = make_button("保存计划信息", primary=True)
+        self.plan_save_button = make_save_button("保存计划信息")
         self.plan_save_button.clicked.connect(self._save_plan)
         plan_section = Section(
             "计划信息",
-            actions=[self.plan_save_button],
+            save_actions=[self.plan_save_button],
             info="日期范围仅表示计划执行时间；关联流水默认筛选近三个月到今天",
         )
         form = QHBoxLayout()
@@ -143,26 +181,43 @@ class SpendingPlansPage(QWidget):
         layout.addLayout(cards)
 
         self.add_item_button = make_button("新增分项")
+        self.top_button = make_button("置顶")
+        self.bottom_button = make_button("置尾")
         self.delete_item_button = make_button("删除选中")
         self.undo_item_button = make_button("撤销删除")
-        self.save_items_button = make_button("保存分项", primary=True)
+        self.save_items_button = make_save_button("保存分项")
         self.add_item_button.clicked.connect(self._add_item)
+        self.top_button.clicked.connect(self._move_selected_top)
+        self.bottom_button.clicked.connect(self._move_selected_bottom)
         self.delete_item_button.clicked.connect(self._delete_item)
         self.undo_item_button.clicked.connect(self._undo_item)
         self.save_items_button.clicked.connect(self._save_items)
-        items_section = Section(
-            "分项与关联流水",
-            actions=[
-                self.add_item_button,
-                self.delete_item_button,
-                self.undo_item_button,
-                self.save_items_button,
-            ],
-            info="每个分项可单独关联记账流水，实际金额 = 关联流水合计 + 手动补录",
-        )
+        items_section = Section("分项与关联流水")
+        save_row = QHBoxLayout()
+        save_row.addStretch(1)
+        save_row.addWidget(self.save_items_button)
+        items_section.add_layout(save_row)
+        action_row = QHBoxLayout()
+        action_row.addStretch(1)
+        for button in (
+            self.add_item_button,
+            self.top_button,
+            self.bottom_button,
+            self.delete_item_button,
+            self.undo_item_button,
+        ):
+            action_row.addWidget(button)
+        items_section.add_layout(action_row)
 
-        self.items_table = QTableWidget(0, 8)
+        self.items_table = ReorderableItemsTable(0, 8)
+        self.items_table.set_reorder_callback(self._reorder_rows)
         self.items_table._enter_save = True
+        self.items_table.setDragEnabled(True)
+        self.items_table.setAcceptDrops(True)
+        self.items_table.setDropIndicatorShown(True)
+        self.items_table.setDragDropMode(QAbstractItemView.InternalMove)
+        self.items_table.setDefaultDropAction(Qt.MoveAction)
+        self.items_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.items_table.setHorizontalHeaderLabels(
             [
                 "完成",
@@ -322,20 +377,6 @@ class SpendingPlansPage(QWidget):
         op_layout.setContentsMargins(4, 2, 4, 2)
         op_layout.setSpacing(4)
         op_layout.addStretch(1)
-        move_up = QToolButton()
-        move_up.setText("↑")
-        move_up.setToolTip("上移")
-        move_up.setFixedSize(26, 26)
-        move_up.clicked.connect(
-            lambda _=False, r=row: self._move_item(r, -1)
-        )
-        move_down = QToolButton()
-        move_down.setText("↓")
-        move_down.setToolTip("下移")
-        move_down.setFixedSize(26, 26)
-        move_down.clicked.connect(
-            lambda _=False, r=row: self._move_item(r, 1)
-        )
         link_button = make_button("关联流水")
         link_button.clicked.connect(
             lambda _=False, r=row: self._open_link_dialog(r)
@@ -344,41 +385,74 @@ class SpendingPlansPage(QWidget):
         voucher_button.clicked.connect(
             lambda _=False, r=row: self._open_voucher_dialog(r)
         )
-        op_layout.addWidget(move_up)
-        op_layout.addWidget(move_down)
         op_layout.addWidget(link_button)
         op_layout.addWidget(voucher_button)
         op_layout.addStretch(1)
         self.items_table.setCellWidget(row, 7, op)
 
-    def _move_item(self, row: int, delta: int) -> None:
-        target = row + delta
-        if row < 0 or target < 0 or target >= len(self._item_ids):
+    def _reorder_rows(self, source: int, target: int) -> None:
+        if source < 0 or source >= len(self._item_ids):
             return
-        self._swap_rows(row, target)
+        target = max(0, min(len(self._item_ids) - 1, target))
+        if source == target:
+            return
+        snapshot = self._snapshot_item_rows()
+        moved = snapshot.pop(source)
+        snapshot.insert(target, moved)
+        self._rebuild_items_from_snapshot(snapshot)
         self.items_table.setCurrentCell(target, 1)
         self.items_table.resizeRowsToContents()
 
-    def _swap_rows(self, row_a: int, row_b: int) -> None:
-        for col in range(self.items_table.columnCount()):
-            item_a = self.items_table.takeItem(row_a, col)
-            item_b = self.items_table.takeItem(row_b, col)
-            if item_a is not None:
-                self.items_table.setItem(row_b, col, item_a)
-            if item_b is not None:
-                self.items_table.setItem(row_a, col, item_b)
-        self._set_op_widget(row_a)
-        self._set_op_widget(row_b)
-        self._item_ids[row_a], self._item_ids[row_b] = (
-            self._item_ids[row_b],
-            self._item_ids[row_a],
-        )
-        self._item_rows[row_a], self._item_rows[row_b] = (
-            self._item_rows[row_b],
-            self._item_rows[row_a],
-        )
-        self._apply_row_lock(row_a)
-        self._apply_row_lock(row_b)
+    def _snapshot_item_rows(self) -> list[dict]:
+        rows = []
+        for row in range(self.items_table.rowCount()):
+            stored = (
+                dict(self._item_rows[row])
+                if row < len(self._item_rows)
+                else {}
+            )
+            rows.append(
+                {
+                    "id": self._item_ids[row],
+                    "name": self.items_table.item(row, 1).text(),
+                    "manual_actual": _parse_float(
+                        self.items_table.item(row, 2).text()
+                    ),
+                    "planned_amount": _parse_float(
+                        self.items_table.item(row, 3).text()
+                    ),
+                    "note": self.items_table.item(row, 6).text(),
+                    "completed": int(
+                        self.items_table.item(row, 0).checkState()
+                        == Qt.Checked
+                    ),
+                    "voucher_path": stored.get("voucher_path", ""),
+                }
+            )
+        return rows
+
+    def _rebuild_items_from_snapshot(self, snapshot: list[dict]) -> None:
+        self.items_table.setUpdatesEnabled(False)
+        try:
+            self.items_table.blockSignals(True)
+            self.items_table.setRowCount(0)
+            self._item_ids = []
+            self._item_rows = []
+            for data in snapshot:
+                self._append_item_row(data)
+            self.items_table.blockSignals(False)
+        finally:
+            self.items_table.setUpdatesEnabled(True)
+
+    def _move_selected_top(self) -> None:
+        row = self.items_table.currentRow()
+        if row > 0:
+            self._reorder_rows(row, 0)
+
+    def _move_selected_bottom(self) -> None:
+        row = self.items_table.currentRow()
+        if 0 <= row < len(self._item_ids) - 1:
+            self._reorder_rows(row, len(self._item_ids) - 1)
 
     def _apply_row_lock(self, row: int) -> None:
         """已完成分项锁定整行，取消勾选后恢复编辑。"""

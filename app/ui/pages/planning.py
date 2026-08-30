@@ -29,6 +29,7 @@ from ..widgets import (
     make_formula_button,
     make_money_spin,
     make_percent_spin,
+    make_save_button,
     money,
 )
 
@@ -154,15 +155,18 @@ class PlanningPage(QScrollArea):
         goal_form.addWidget(self.goal_note_edit, 0, 7)
         buttons = QHBoxLayout()
         self.goal_add_button = make_button("新增目标", primary=True)
-        self.goal_update_button = make_button("保存修改")
+        self.goal_update_button = make_save_button("保存修改")
         self.goal_delete_button = make_button("删除")
         self.goal_undo_button = make_button("撤销删除")
         self.goal_add_button.clicked.connect(self._add_goal)
         self.goal_update_button.clicked.connect(self._update_goal)
         self.goal_delete_button.clicked.connect(self._delete_goal)
         self.goal_undo_button.clicked.connect(self._undo_goal)
+        save_buttons = QHBoxLayout()
+        save_buttons.addStretch(1)
+        save_buttons.addWidget(self.goal_update_button)
+        goals_section.add_layout(save_buttons)
         buttons.addWidget(self.goal_add_button)
-        buttons.addWidget(self.goal_update_button)
         buttons.addWidget(self.goal_delete_button)
         buttons.addWidget(self.goal_undo_button)
         buttons.addStretch(1)

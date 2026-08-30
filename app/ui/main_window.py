@@ -35,7 +35,7 @@ from .sync_worker import CloudSyncWorker
 from .pages.about import AboutPage
 from .pages.deposits import DepositsPage
 from .pages.holdings import HoldingsPage
-from .pages.insurance import InsurancePage
+from .pages.insurance import InsurancePage, SalaryProfileTab
 from .pages.overview import OverviewPage
 from .pages.pension import PensionPage
 from .pages.planning import PlanningPage
@@ -165,6 +165,15 @@ class MainWindow(QMainWindow):
         if current is None:
             return
         index = current.data(0, Qt.UserRole)
+        if index is None:
+            return
+        if not self._confirm_leave_current_page():
+            previous = _previous
+            if previous is not None:
+                self.nav.blockSignals(True)
+                self.nav.setCurrentItem(previous)
+                self.nav.blockSignals(False)
+            return
         if 0 <= index < self.stack.count():
             self.stack.setCurrentIndex(index)
 
@@ -172,6 +181,23 @@ class MainWindow(QMainWindow):
         index = item.data(0, Qt.UserRole)
         if index is None:
             item.setExpanded(not item.isExpanded())
+
+    def _confirm_leave_current_page(self) -> bool:
+        """离开工资计算页前处理未保存修改，返回 True 允许离开。"""
+        page = self.stack.currentWidget()
+        if not isinstance(page, InsurancePage):
+            return True
+        tab = page.tabs.currentWidget()
+        if not isinstance(tab, SalaryProfileTab) or not tab.is_dirty():
+            return True
+        choice = page.prompt_unsaved(tab)
+        if choice == "save":
+            tab._save_payload()
+            return True
+        if choice == "discard":
+            tab.discard_changes()
+            return True
+        return False
 
     def _global_save(self) -> None:
         page = self.stack.currentWidget()
